@@ -690,6 +690,9 @@ OutputValidationStats validateStagedOutput(const fs::path& staging) {
     context.stagingRoot = fs::canonical(staging, error);
     if(error) fail(staging, "暂存目录无法解析");
     validateManifestFile(context.stagingRoot / "tileset.json", context, "主入口");
+    auto mainDocument=parseJsonFile(context.stagingRoot/"tileset.json","主入口");
+    if(mainDocument.value("root",Json::object()).value("geometricError",0.0)<=0.0)
+        fail(context.stagingRoot/"tileset.json","主入口根 geometricError 必须为正，否则 Cesium 会跳过整棵子树");
     fs::path reportPath = context.stagingRoot / "conversion-report.json";
     if(!fs::is_regular_file(reportPath, error)) fail(reportPath, "缺少转换报告");
     auto report = parseJsonFile(reportPath, "转换报告");

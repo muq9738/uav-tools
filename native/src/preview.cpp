@@ -254,6 +254,7 @@ Json writeBlock(const PreviewMesh& mesh,const fs::path& output,unsigned serial,c
         {"bytes",content.bytes},{"primitives",geometries.size()},{"geometryRawBytes",content.geometryRawBytes},{"geometryStoredBytes",content.geometryStoredBytes},
         {"compressedViews",content.compressedViews},{"coordinateRoundingErrorMeters",content.coordinateRoundingError},
         {"atlasPages",atlasReport},{"standaloneTextures",directImages.size()},{"images",content.imageAudit},
+        {"simplification",mesh.simplification},
         {"bounds",{content.bounds.xMin(),content.bounds.yMin(),content.bounds.zMin(),content.bounds.xMax(),content.bounds.yMax(),content.bounds.zMax()}}};
 }
 }
@@ -271,7 +272,9 @@ Json buildPreview(const std::vector<PreviewSource>& sources,const Options& optio
     for(unsigned blockIndex=0;blockIndex<groups.size();++blockIndex) {
         if(options.checkCancelled) options.checkCancelled();
         const auto& group=groups[blockIndex];std::uint64_t groupInput=0;for(auto index:group) groupInput+=sources[index].inputTriangles;
-        PreviewMesh combined;std::uint64_t remainingBudget=groupInput,remainingInput=groupInput;
+        // 总预算按输入面数比例分到各空间块，块内再按源面数分配；否则预算永远不会生效。
+        std::uint64_t blockBudget=std::max<std::uint64_t>(1,static_cast<std::uint64_t>(defaultTriangleBudget)*groupInput/std::max<std::uint64_t>(1,inputTriangles));
+        PreviewMesh combined;std::uint64_t remainingBudget=std::min(blockBudget,groupInput),remainingInput=groupInput;
         for(std::size_t position=0;position<group.size();++position) {
             if(options.checkCancelled) options.checkCancelled();
             const auto& source=sources[group[position]];
@@ -282,11 +285,43 @@ Json buildPreview(const std::vector<PreviewSource>& sources,const Options& optio
             std::vector<GeometryInput> meshes;collectResident(node.get(),source.matrix,nullptr,meshes);
             auto simplified=simplifyPreview(meshes,target,options,spatial);
             unsigned materialOffset=combined.materials.size();combined.hasColors|=simplified.hasColors;combined.inputTriangles+=simplified.inputTriangles;
+            auto& audit=combined.simplification;
+            audit["inputTriangles"]=audit.value("inputTriangles",0ULL)+simplified.inputTriangles;
+            audit["targetTriangles"]=audit.value("targetTriangles",0ULL)+static_cast<std::uint64_t>(target);
+            audit["collapses"]=audit.value("collapses",0ULL)+simplified.simplification.value("collapses",0ULL);
+            audit["qemRejectedEdges"]=audit.value("qemRejectedEdges",0ULL)+simplified.simplification.value("rejectedEdges",0ULL);
+            audit["sources"]=audit.value("sources",0ULL)+1;
+            audit["maxCollapseDisplacementMeters"]=std::max(audit.value("maxCollapseDisplacementMeters",0.0),simplified.simplification.value("maxCollapseDisplacementMeters",0.0));
+            if(simplified.simplification.contains("cellSizeMeters"))
+                audit["cellSizeMeters"]=std::max(audit.value("cellSizeMeters",0.0),simplified.simplification.value("cellSizeMeters",0.0));
+            if(!audit.contains("sourcesDetail")) audit["sourcesDetail"]=Json::array();
+            audit["sourcesDetail"].push_back(simplified.simplification);
+            auto method=simplified.simplification.value("method","none");
+            if(!audit.contains("methods")) audit["methods"]=Json::object();
+            audit["methods"][method]=audit["methods"].value(method,0ULL)+1;
+            auto rank=[](const std::string& value) {
+                if(value=="triangle-decimate") return 4;
+                if(value=="vertex-cluster") return 3;
+                if(value=="qem-relaxed") return 2;
+                if(value=="qem") return 1;
+                return 0;
+            };
+            if(rank(method)>rank(audit.value("method","none"))) audit["method"]=method;
+            if(simplified.simplification.contains("warning")) {
+                auto text=simplified.simplification.at("warning").get<std::string>();
+                if(std::find(warnings.begin(),warnings.end(),text)==warnings.end()) warnings.push_back(text);
+            }
             for(auto& material:simplified.materials) combined.materials.push_back(std::move(material));
             for(auto& face:simplified.faces) {face.material+=materialOffset;combined.faces.push_back(std::move(face));}
             remainingBudget=remainingBudget>target?remainingBudget-target:0;remainingInput=remainingInput>source.inputTriangles?remainingInput-source.inputTriangles:0;
             ++processed;if(options.event) options.event({{"type","progress"},{"stage","preview"},{"done",processed},{"total",sources.size()},{"unit","files"}});
         }
+        combined.simplification["outputTriangles"]=combined.faces.size();
+        combined.simplification["budgetReached"]=combined.faces.size()<=std::max<std::uint64_t>(1,blockBudget);
+        if(!combined.simplification.value("budgetReached",false))
+            warnings.push_back("空间块 "+std::to_string(blockIndex)+" 未达到三角面预算："+combined.simplification.dump());
+        if(combined.simplification.value("method","")=="triangle-decimate")
+            warnings.push_back("空间块 "+std::to_string(blockIndex)+" 使用面积裁剪兜底，非流形几何可能出现空洞");
         auto block=writeBlock(combined,options.output,blockIndex,options,warnings,textureFiles);
         auto blockBounds=block.at("bounds").get<std::vector<double>>();osg::BoundingBoxd box(blockBounds[0],blockBounds[1],blockBounds[2],blockBounds[3],blockBounds[4],blockBounds[5]);
         bounds.expandBy(box);outputTriangles+=block.at("outputTriangles").get<std::uint64_t>();bytes+=block.at("bytes").get<std::uint64_t>();vertices+=block.at("vertices").get<std::uint64_t>();

@@ -62,15 +62,30 @@ std::map<std::string,std::string> previewAssets(const fs::path& root) {
 }
 Json gltf(const fs::path& file) {auto bytes=readBytes(file);std::uint32_t length=0;std::memcpy(&length,bytes.data()+12,4);return Json::parse(bytes.begin()+20,bytes.begin()+20+length);}
 }
-int main() {
+int main(int argc,char** argv) {
     try {
+        if(argc>=3 && std::string(argv[1])=="--fixture") {
+            // 生成可复现的流形网格数据集，供人工对比与验收；不参与默认回归。
+            auto directory=fs::absolute(fs::u8path(argv[2]));unsigned roots=argc>=4?static_cast<unsigned>(std::stoul(argv[3])):4;
+            unsigned divisions=argc>=5?static_cast<unsigned>(std::stoul(argv[4])):64;
+            for(unsigned i=0;i<roots;++i) {
+                auto transform=new osg::MatrixTransform;
+                transform->setMatrix(osg::Matrixd::translate(double(i%4)*8.5,double(i/4)*8.5,0));
+                auto node=new osg::Group;node->addChild(grid(divisions).get());transform->addChild(node);
+                writeNode(transform,directory/("block"+std::to_string(i)+".osgb"));
+            }
+            std::cout<<"Preview fixture: "<<directory<<" roots="<<roots<<" divisions="<<divisions<<" triangles="<<roots*divisions*divisions*2<<'\n';
+            return 0;
+        }
         auto root=fs::temp_directory_path()/("preview-tests-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));fixture(root/"input");
         auto baseOptions=options(root/"input",root/"baseline");auto baseline=convert(baseOptions);auto expected=mainAssets(root/"baseline");
         auto enabled=baseOptions;enabled.output=root/"preview-output";enabled.preview=true;auto report=convert(enabled);
         require(report["sourceExact"]==true && report["sourceContentsExact"]==true,"预览不得改变主产物 sourceExact");
         require(report["preview"]["status"]=="complete" && report["preview"]["algorithm"]=="mesh-preview-v1" && report["preview"]["glbs"]==1,"预览摘要");
         require(mainAssets(enabled.output)==expected,"开关预览前后主 tileset/content/textures/tiles 必须逐字节一致");
-        require(report["preview"]["triangles"].get<std::uint64_t>()==256,"预览只取显示前沿，不能合并分页 leaf LOD");
+        // root0 的常驻网格被分页 leaf 替换，root1 无子节点；只取最深显示前沿，合计 128+288。
+        require(report["preview"]["triangles"].get<std::uint64_t>()==416,"预览必须取最深的有效显示前沿，不合并 LOD 各层");
+        require(report["preview"]["sourceTriangles"].get<std::uint64_t>()==416,"预览源三角面应等于有效显示前沿");
         auto detail=Json::parse(readBytes(enabled.output/"preview/preview-report.json"));
         require(detail["atlasPages"]==1 && detail["textureFormat"]=="uastc" && detail["normals"]=="omitted","图集/UASTC/unlit 报告");
         auto previewGlb=enabled.output/"preview/content/preview-0.glb";auto doc=gltf(previewGlb);
@@ -89,6 +104,24 @@ int main() {
         auto simpleGeometry=grid(16);std::vector<GeometryInput> simpleInputs={{simpleGeometry->getDrawable(0)->asGeometry(),simpleGeometry->getDrawable(0)->asGeometry()->getOrCreateStateSet(),osg::Matrixd::identity()}};
         auto simplified=simplifyPreview(simpleInputs,32,enabled,nullptr);require(simplified.faces.size()<=32 && simplified.inputTriangles==512,"预览 QEM 三角形预算");
         for(const auto& face:simplified.faces) for(const auto& uv:face.uv) require(std::isfinite(uv.x()) && std::isfinite(uv.y()),"QEM 后 UV 必须有限");
+        // 非流形三角汤：QEM 会拒绝全部边，必须由聚类兜底把面数压到预算内。
+        auto soupGeometry=new osg::Geometry;auto soupPositions=new osg::Vec3Array;auto soupUv=new osg::Vec2Array;
+        for(unsigned i=0;i<2400;++i) {
+            for(unsigned k=0;k<3;++k) {
+                unsigned seed=i*3+k;soupPositions->push_back({float((seed*37)%97)*.5f,float((seed*53)%89)*.5f,float((seed*17)%31)*.1f});
+                soupUv->push_back({float((seed*11)%17)/17.f,float((seed*7)%13)/13.f});
+            }
+        }
+        soupGeometry->setVertexArray(soupPositions);soupGeometry->setTexCoordArray(0,soupUv);
+        soupGeometry->addPrimitiveSet(new osg::DrawArrays(GL_TRIANGLES,0,soupPositions->size()));
+        auto soupGeode=new osg::Geode;soupGeode->addDrawable(soupGeometry);
+        std::vector<GeometryInput> soupInputs={{soupGeometry,soupGeometry->getOrCreateStateSet(),osg::Matrixd::identity()}};
+        auto soup=simplifyPreview(soupInputs,400,enabled,nullptr);
+        require(soup.faces.size()<=400,"非流形网格必须落入预览三角面预算: "+soup.simplification.dump());
+        require(soup.faces.size()>0,"聚类兜底不能删除全部几何");
+        auto soupMethod=soup.simplification.value("method","");
+        require(soupMethod=="vertex-cluster" || soupMethod=="triangle-decimate","非流形网格必须报告兜底方法: "+soup.simplification.dump());
+        if(soupMethod=="triangle-decimate") require(soup.simplification.contains("warning"),"裁剪兜底必须给出空洞警告");
         auto resumedOptions=enabled;resumedOptions.output=root/"resumed";resumedOptions.checkpointDir=root/"checkpoint";resumedOptions.pauseFile=root/"pause";
         resumedOptions.event=[&](const Json& event) {if(event.value("stage","")=="preview" && event.value("done",0)>=1) atomicWrite(resumedOptions.pauseFile,{});};
         auto paused=convert(resumedOptions);require(paused["status"]=="paused","预览阶段合作暂停");

@@ -629,6 +629,12 @@ Json convert(const Options& requested) {
     if(options.checkCancelled) options.checkCancelled();
     if(resume) resume->check();
     emit({{"type","progress"},{"stage","finalize"},{"done",processed},{"total",processed},{"unit","files"}});
+    // 单层输入的所有文件都没有子瓦片时，逐文件误差都是 0；顶层根若沿用 0，
+    // Cesium 会认定无需细化而跳过整棵树。根节点必须有正误差。
+    if(!(error>0) && bounds.valid()) {
+        double extent=std::max({bounds.xMax()-bounds.xMin(),bounds.yMax()-bounds.yMin(),bounds.zMax()-bounds.zMin()});
+        error=std::max(extent/50.,1e-3);
+    }
     Json root={{"boundingVolume",boundingBoxJson(bounds)},{"transform",std::vector<double>(placement.ptr(),placement.ptr()+16)},
                {"geometricError",error},{"refine","REPLACE"},{"children",children}};
     // 前端只需一份层级清单，去除每个源文件一次外部 JSON 往返；内容选择规则保持不变。
@@ -659,20 +665,25 @@ Json convert(const Options& requested) {
     if(options.preview) {
         std::map<std::string,std::pair<const Json*,const Json*>> sourceByContent;
         for(const auto& row:records) for(const auto& content:row.at("content")) sourceByContent[content.at("uri").get<std::string>()]={&row,&content};
-        auto frontier=[&](auto&& self,const Json& tile)->void {
-            if(tile.contains("content")) {
-                const auto uri=tile.at("content").at("uri").get<std::string>();auto found=sourceByContent.find(uri);
-                if(found==sourceByContent.end()) throw std::runtime_error("预览显示前沿缺少源记录: "+uri);
-                const auto& row=*found->second.first;const auto& content=*found->second.second;
-                auto matrix=row.at("sourceTransform").get<std::vector<double>>();if(matrix.size()!=16) throw std::runtime_error("预览源矩阵无效");
-                auto box=tile.at("boundingVolume").at("box").get<std::vector<double>>();if(box.size()!=12) throw std::runtime_error("预览源包围盒无效");
-                osg::BoundingBoxd sourceBounds;for(int x:{-1,1}) for(int y:{-1,1}) for(int z:{-1,1}) sourceBounds.expandBy(osg::Vec3d(
-                    box[0]+x*box[3]+y*box[6]+z*box[9],box[1]+x*box[4]+y*box[7]+z*box[10],box[2]+x*box[5]+y*box[8]+z*box[11]));
-                previewSources.push_back({fs::u8path(row.at("source").get<std::string>()),osg::Matrixd(matrix.data()),sourceBounds,content.at("triangles").get<std::uint64_t>()});
-                if(resume) resume->checkSource(previewSources.back().file);
-                return; // 取有效显示前沿，不把其 LOD 后代重复合并。
-            }
-            if(tile.contains("children")) for(const auto& child:tile["children"]) self(self,child);
+        auto addSource=[&](const Json& tile)->void {
+            const auto uri=tile.at("content").at("uri").get<std::string>();auto found=sourceByContent.find(uri);
+            if(found==sourceByContent.end()) throw std::runtime_error("预览显示前沿缺少源记录: "+uri);
+            const auto& row=*found->second.first;const auto& content=*found->second.second;
+            auto matrix=row.at("sourceTransform").get<std::vector<double>>();if(matrix.size()!=16) throw std::runtime_error("预览源矩阵无效");
+            auto box=tile.at("boundingVolume").at("box").get<std::vector<double>>();if(box.size()!=12) throw std::runtime_error("预览源包围盒无效");
+            osg::BoundingBoxd sourceBounds;for(int x:{-1,1}) for(int y:{-1,1}) for(int z:{-1,1}) sourceBounds.expandBy(osg::Vec3d(
+                box[0]+x*box[3]+y*box[6]+z*box[9],box[1]+x*box[4]+y*box[7]+z*box[10],box[2]+x*box[5]+y*box[8]+z*box[11]));
+            previewSources.push_back({fs::u8path(row.at("source").get<std::string>()),osg::Matrixd(matrix.data()),sourceBounds,content.at("triangles").get<std::uint64_t>()});
+            if(resume) resume->checkSource(previewSources.back().file);
+        };
+        // REPLACE 细化下子节点会替换父内容；预览取最深的有效显示前沿（叶子 LOD），
+        // 而不是根部的粗糙常驻层，并避免把同一条 LOD 链的每一层重复合并。
+        auto frontier=[&](auto&& self,const Json& tile)->bool {
+            bool childContent=false;
+            if(tile.contains("children")) for(const auto& child:tile["children"]) childContent=self(self,child)||childContent;
+            if(childContent) return true;
+            if(tile.contains("content")) {addSource(tile);return true;}
+            return false;
         };
         for(const auto& child:root["children"]) frontier(frontier,child);
     }
@@ -801,6 +812,7 @@ Json convert(const Options& requested) {
     if(options.preview) report["preview"]={
         {"status","complete"},{"entry","preview/tileset.json"},{"algorithm","mesh-preview-v1"},
         {"triangles",previewReport.at("triangles")},{"glbs",previewReport.at("glbs")},
+        {"sourceTriangles",previewReport.at("inputTriangles")},
         {"geometryEncoding","EXT_meshopt_compression"},{"textureFormat","uastc"}};
     if(checkpoint) {
         report["checkpointDir"]=checkpoint->directory().u8string();report["filesCompleted"]=checkpoint->filesCompleted();

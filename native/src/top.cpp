@@ -179,12 +179,14 @@ Candidate candidate(const Mesh& m,const std::vector<Quadric>& quadrics,unsigned 
     }
     return best;
 }
-bool safeCollapse(const Mesh& m,const Candidate& c) {
-    unsigned count=shared(m,c.a,c.b);if(count<1 || count>2) return false;
+bool safeCollapse(const Mesh& m,const Candidate& c,bool relaxTopology=false) {
+    unsigned count=shared(m,c.a,c.b);if(count<1 || count>2) {if(!relaxTopology) return false;}
     if(m.v[c.a].faces.size()==1 && m.v[c.b].faces.size()==1) return false; // retain isolated components
-    auto na=neighbors(m,c.a),nb=neighbors(m,c.b);unsigned common=0;for(auto v:na) if(nb.count(v)) ++common;
-    if(common!=count) return false; // manifold link condition
-    if(boundary(m,c.a) && boundary(m,c.b) && count!=1) return false;
+    if(!relaxTopology) {
+        auto na=neighbors(m,c.a),nb=neighbors(m,c.b);unsigned common=0;for(auto v:na) if(nb.count(v)) ++common;
+        if(common!=count) return false; // manifold link condition
+        if(boundary(m,c.a) && boundary(m,c.b) && count!=1) return false;
+    }
     std::set<unsigned> affected=m.v[c.a].faces;affected.insert(m.v[c.b].faces.begin(),m.v[c.b].faces.end());
     for(auto i:affected) {
         const auto& f=m.f[i];bool a=false,b=false;std::array<V,3> p;
@@ -389,7 +391,7 @@ Json sealBoundaries(Mesh& mesh,double sealDistance) {
     mesh=std::move(sealed);
     return audit;
 }
-Json simplify(Mesh& m,std::size_t target,const Options& options) {
+Json simplify(Mesh& m,std::size_t target,const Options& options,bool relaxTopology=false) {
     std::vector<Quadric> q(m.v.size());
     for(const auto& f:m.f) {
         V n=normal(m,f);if(n.normalize()==0) continue;double d=-(n*m.v[f.v[0]].p);
@@ -404,7 +406,7 @@ Json simplify(Mesh& m,std::size_t target,const Options& options) {
         if(collapses%128==0) check(options);
         auto c=queue.top();queue.pop();auto& a=m.v[c.a];auto& b=m.v[c.b];
         if(!a.alive || !b.alive || a.version!=c.va || b.version!=c.vb || !shared(m,c.a,c.b)) continue;
-        if(!safeCollapse(m,c)) {++rejected;continue;}
+        if(!safeCollapse(m,c,relaxTopology)) {++rejected;continue;}
         auto affected=a.faces;affected.insert(b.faces.begin(),b.faces.end());
         auto around=neighbors(m,c.a);auto bn=neighbors(m,c.b);around.insert(bn.begin(),bn.end());
         displacement=std::max({displacement,(c.p-a.p).length(),(c.p-b.p).length()});
@@ -421,7 +423,8 @@ Json simplify(Mesh& m,std::size_t target,const Options& options) {
     }
     return {{"inputTriangles",m.source.size()},{"targetTriangles",target},{"outputTriangles",live},
         {"collapses",collapses},{"rejectedEdges",rejected},{"maxCollapseDisplacementMeters",displacement},
-        {"budgetReached",live<=target},{"boundaryPolicy","material partitions; boundary QEM weights 10/100; manifold/no-flip"}};
+        {"budgetReached",live<=target},{"relaxedTopology",relaxTopology},
+        {"boundaryPolicy",relaxTopology?"material/UV partitions; relaxed link condition; no-flip":"material partitions; boundary QEM weights 10/100; manifold/no-flip"}};
 }
 // Small (<=20-face) least-squares conformal charts; two pinned UV vertices.
 // Householder-free modified Gram-Schmidt with reorthogonalization avoids a new
@@ -925,14 +928,148 @@ TopResult rebuildTop(std::vector<TopSource> sources,const Options& options,const
     Builder builder(options,spatial);std::vector<Item> items;for(auto& source:sources) items.push_back(builder.source(std::move(source)));
     auto root=builder.build(std::move(items));TopResult result;result.children.push_back(root.tile);result.error=root.error;result.audit=std::move(builder.audit);return result;
 }
+// 最后兜底：流形与聚类都无法达到预算时（例如无拓扑关联的三角汤），
+// 按面积保留较大的三角面。会产生空洞，报告单独警告，不用于常规场景。
+Json decimateToBudget(Mesh& mesh,std::size_t target) {
+    std::vector<unsigned> order;
+    for(unsigned i=0;i<mesh.f.size();++i) if(mesh.f[i].alive) order.push_back(i);
+    if(order.size()<=target) return {{"method","none"},{"budgetReached",true}};
+    std::vector<double> area(order.size());
+    for(std::size_t i=0;i<order.size();++i) area[i]=normal(mesh,mesh.f[order[i]]).length()*.5;
+    std::vector<std::size_t> ranking(order.size());std::iota(ranking.begin(),ranking.end(),0);
+    std::nth_element(ranking.begin(),ranking.begin()+static_cast<std::ptrdiff_t>(target),ranking.end(),
+        [&](std::size_t a,std::size_t b) {return area[a]>area[b];});
+    ranking.resize(target);
+    std::set<unsigned> keep;double minimum=std::numeric_limits<double>::infinity();
+    for(auto index:ranking) {keep.insert(order[index]);minimum=std::min(minimum,area[index]);}
+    Mesh reduced;reduced.materials=mesh.materials;reduced.hasColors=mesh.hasColors;reduced.inputTriangles=mesh.inputTriangles;
+    for(unsigned i=0;i<mesh.f.size();++i) {
+        if(!mesh.f[i].alive) continue;
+        if(!keep.count(i)) {++reduced.inputTriangles;continue;}
+        reduced.f.push_back(mesh.f[i]);reduced.source.push_back(i<mesh.source.size()?mesh.source[i]:SourceFace());
+    }
+    // 重建实际被引用的顶点，避免悬空索引。
+    std::map<unsigned,unsigned> remap;std::vector<Vertex> vertices;
+    for(auto& face:reduced.f) for(auto& index:face.v) {
+        auto [it,inserted]=remap.emplace(index,vertices.size());
+        if(inserted) vertices.push_back(mesh.v[index]);
+        index=it->second;
+    }
+    reduced.v=std::move(vertices);
+    for(unsigned i=0;i<reduced.f.size();++i) for(auto v:reduced.f[i].v) reduced.v[v].faces.insert(i);
+    mesh=std::move(reduced);
+    return {{"method","triangle-decimate"},{"outputTriangles",mesh.f.size()},{"budgetReached",mesh.f.size()<=target},
+            {"minKeptFaceAreaSquareMeters",minimum},{"warning","非流形几何无法聚簇，按面积裁剪三角面，可能出现空洞"}};
+}
+
+std::size_t liveFaces(const Mesh& mesh) {
+    return static_cast<std::size_t>(std::count_if(mesh.f.begin(),mesh.f.end(),[](const Face& face){return face.alive;}));
+}
+// QEM 之后可能残留与已删除面重复的三角面（顶点合并后三元组相同），
+// 它们在渲染时会被重复绘制，必须按顶点三元组去重后重新统计有效面数。
+void deduplicateFaces(Mesh& mesh) {
+    std::set<std::array<unsigned,3>> seen;
+    for(auto& face:mesh.f) if(face.alive) {
+        auto sorted=face.v;std::sort(sorted.begin(),sorted.end());
+        if(!seen.insert(sorted).second) face.alive=false;
+    }
+}
+
+// QEM 依赖流形邻接；扫描数据里的三角汤或大量孤岛会让所有边被拒绝。
+// 此时按世界坐标量化做顶点聚类兜底：同格且材质/UV/颜色接近的顶点合并，退化面剔除，
+// 报告实际格子边长作为几何误差上界，避免预览在不可简化网格上失效。
+Json clusterToBudget(Mesh& mesh,std::size_t target) {
+    if(liveFaces(mesh)<=target) return {{"method","none"},{"budgetReached",true}};
+    V low=mesh.v[mesh.f.front().v[0]].p,high=low;
+    for(const auto& f:mesh.f) for(auto index:f.v) for(unsigned k=0;k<3;++k) {
+        low[k]=std::min(low[k],mesh.v[index].p[k]);high[k]=std::max(high[k],mesh.v[index].p[k]);
+    }
+    double diagonal=std::max(1e-6,(high-low).length());
+    auto build=[&](double cell) {
+        struct Accumulated {V position;UV uv;Color color;unsigned count=0;};
+        using Key=std::tuple<long long,long long,long long,long long,long long,unsigned,unsigned>;
+        std::map<Key,unsigned> remap;std::vector<Accumulated> accumulated;std::vector<Face> faces;
+        double inverse=1./cell;
+        auto quantize=[] (double value,double inverse) {return static_cast<long long>(std::floor(value*inverse));};
+        for(const auto& face:mesh.f) if(face.alive) {
+            std::array<unsigned,3> mapped{};
+            for(unsigned k=0;k<3;++k) {
+                const auto& vertex=mesh.v[face.v[k]];
+                Key key={quantize(vertex.p.x(),inverse),quantize(vertex.p.y(),inverse),quantize(vertex.p.z(),inverse),
+                         quantize(vertex.uv.x(),inverse),quantize(vertex.uv.y(),inverse),face.material,
+                         static_cast<unsigned>(std::llround(std::clamp(vertex.color.x(),0.,1.)*255.))};
+                auto [it,inserted]=remap.emplace(key,accumulated.size());
+                if(inserted) accumulated.push_back({});
+                auto& slot=accumulated[it->second];
+                slot.position+=vertex.p;slot.uv+=vertex.uv;slot.color+=vertex.color;++slot.count;
+                mapped[k]=it->second;
+            }
+            if(mapped[0]==mapped[1] || mapped[1]==mapped[2] || mapped[2]==mapped[0]) continue;
+            Face output;output.v=mapped;output.material=face.material;faces.push_back(output);
+        }
+        std::vector<Vertex> vertices;vertices.reserve(accumulated.size());
+        for(auto& slot:accumulated) {
+            Vertex merged;double count=std::max(1U,slot.count);
+            merged.p=slot.position/count;merged.uv=slot.uv/count;merged.color=slot.color/count;
+            vertices.push_back(merged);
+        }
+        for(unsigned i=0;i<faces.size();++i) for(auto v:faces[i].v) vertices[v].faces.insert(i);
+        return std::make_pair(std::move(vertices),std::move(faces));
+    };
+    // 单调性：格子越小面数越多。二分找“面数不超过预算的最小格子”，
+    // 这样既保证预算，又尽量保留细节；过粗导致整块消失时不直接放弃。
+    double lowCell=diagonal/8192.,highCell=diagonal,chosen=0;
+    std::pair<std::vector<Vertex>,std::vector<Face>> best;
+    for(unsigned iteration=0;iteration<32;++iteration) {
+        double middle=(lowCell+highCell)*.5;auto candidate=build(middle);
+        if(candidate.second.size()>target || candidate.second.empty()) {lowCell=middle;continue;}
+        best=std::move(candidate);chosen=middle;highCell=middle;
+    }
+    if(best.second.empty()) return {{"method","none"},{"budgetReached",false}};
+    mesh.v=std::move(best.first);mesh.f=std::move(best.second);
+    return {{"method","vertex-cluster"},{"cellSizeMeters",chosen},{"outputTriangles",liveFaces(mesh)},
+            {"budgetReached",liveFaces(mesh)<=target},{"diagonalMeters",diagonal},{"targetTriangles",target}};
+}
+
 PreviewMesh simplifyPreview(const std::vector<GeometryInput>& inputs,std::size_t target,
                             const Options& options,const SpatialReference* spatial) {
     auto mesh=collect(inputs,spatial,true);
     PreviewMesh result;result.inputTriangles=mesh.inputTriangles;result.hasColors=mesh.hasColors;
-    result.simplification=mesh.f.size()>target?simplify(mesh,target,options):Json({
-        {"inputTriangles",mesh.f.size()},{"targetTriangles",target},{"outputTriangles",mesh.f.size()},
+    if(liveFaces(mesh)<=target) result.simplification={
+        {"inputTriangles",liveFaces(mesh)},{"targetTriangles",target},{"outputTriangles",liveFaces(mesh)},
         {"collapses",0},{"rejectedEdges",0},{"maxCollapseDisplacementMeters",0.},{"budgetReached",true},
-        {"boundaryPolicy","material/UV partitions; source already within budget"}});
+        {"relaxedTopology",false},{"method","none"},
+        {"boundaryPolicy","material/UV partitions; source already within budget"}};
+    else {
+        // 先做严格流形 QEM；扫描网格常见的非流形三角汤会拒绝全部边，
+        // 此时放宽连接条件再跑一次（仍禁止翻面与零面积），保证预览预算可达。
+        result.simplification=simplify(mesh,target,options);
+        result.simplification["method"]="qem";
+        deduplicateFaces(mesh);
+        if(liveFaces(mesh)>target) {
+            auto relaxed=simplify(mesh,target,options,true);
+            relaxed["collapses"]=relaxed.value("collapses",0ULL)+result.simplification.value("collapses",0ULL);
+            relaxed["rejectedEdges"]=relaxed.value("rejectedEdges",0ULL)+result.simplification.value("rejectedEdges",0ULL);
+            relaxed["maxCollapseDisplacementMeters"]=std::max(relaxed.value("maxCollapseDisplacementMeters",0.0),result.simplification.value("maxCollapseDisplacementMeters",0.0));
+            relaxed["method"]="qem-relaxed";
+            result.simplification=std::move(relaxed);
+        }
+        if(liveFaces(mesh)>target) {
+            auto clustered=clusterToBudget(mesh,target);
+            deduplicateFaces(mesh);
+            clustered["qemCollapses"]=result.simplification.value("collapses",0ULL);
+            clustered["qemRejectedEdges"]=result.simplification.value("rejectedEdges",0ULL);
+            clustered["inputTriangles"]=result.simplification.value("inputTriangles",0ULL);
+            clustered["maxCollapseDisplacementMeters"]=std::max(result.simplification.value("maxCollapseDisplacementMeters",0.0),
+                clustered.value("cellSizeMeters",0.0)*1.75);
+            result.simplification=std::move(clustered);
+        }
+        if(liveFaces(mesh)>target) {
+            auto decimated=decimateToBudget(mesh,target);
+            decimated["previousMethod"]=result.simplification.value("method","none");
+            result.simplification=std::move(decimated);
+        }
+    }
     for(const auto& material:mesh.materials) result.materials.push_back({material.state,material.image,material.texture});
     result.faces.reserve(mesh.f.size());
     for(const auto& face:mesh.f) if(face.alive) {
@@ -944,7 +1081,7 @@ PreviewMesh simplifyPreview(const std::vector<GeometryInput>& inputs,std::size_t
         result.faces.push_back(output);
     }
     result.simplification["outputTriangles"]=result.faces.size();
-    result.simplification["uniqueInputTriangles"]=mesh.f.size();
+    result.simplification["uniqueInputTriangles"]=liveFaces(mesh);
     return result;
 }
 }

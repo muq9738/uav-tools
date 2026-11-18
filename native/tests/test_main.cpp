@@ -90,6 +90,8 @@ int main() {
         auto strip=triangle(true);writeNode(strip.get(),temp/"strip.osgb",true);
         auto report=convert(options(temp/"plain.osgb",temp/"out-plain"));
         require(report["trianglesAllLods"]==1 && report["verticesAllLods"]==3,"无索引三角形保留");checks++;
+        auto plainManifest=Json::parse(readBytes(temp/"out-plain/tileset.json"));
+        require(plainManifest["root"]["geometricError"].get<double>()>0,"单层输入的主入口根误差必须为正，否则 Cesium 不遍历");checks++;
         auto uri=report["records"][0]["content"][0]["uri"].get<std::string>();auto doc=gltf(temp/"out-plain"/uri);
         require(doc["meshes"][0]["primitives"][0]["attributes"].contains("COLOR_0"),"顶点颜色丢失");checks++;
         auto zipped=convert(options(temp/"strip.osgb",temp/"out-strip"));
