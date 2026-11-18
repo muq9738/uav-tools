@@ -17,6 +17,12 @@ macOS 打开 `OSGB 转 3D Tiles.app`；Windows/Linux 使用相应桌面包或便
 
 macOS App 的 CLI 位于 `OSGB 转 3D Tiles.app/Contents/Resources/bin/osgb-tiles`。Windows 文件名带 `.exe`。
 
+Windows 默认提供完整便携目录：先解压整个 ZIP，再双击 `OSGB 转 3D Tiles.exe`，必须保留同目录的 `bin/`、DLL、插件与许可。安装是可选的；`osgb-tiles-setup-*.exe` 使用 MyGo 的用户级安装，默认写入当前用户的 `%LOCALAPPDATA%\Programs`，不请求管理员权限。
+
+桌面窗口需要 Microsoft WebView2 Runtime。若尚未安装或不希望安装，运行包内的 `Start Browser.cmd`，使用默认浏览器和同一个随包转换器；输入、输出目录需手动填写本机路径，按终端 Ctrl+C 停止服务。也可运行 `osgb-tiles-app --browser`。缺少转换器或 WebView2 时，双击桌面程序会显示启动错误。
+
+若需要补装 WebView2，可从[微软官方入口](https://go.microsoft.com/fwlink/p/?LinkId=2124703)下载，以普通用户身份运行安装器；本应用不会自动提权或强制安装。企业策略与已有的机器级 Edge 更新器可能影响运行时的安装范围。
+
 App 默认只在本机监听。服务部署时显式设置 `--addr`、`--token` 与 `--data-dir`。例如 Docker 映射输入、输出和状态目录，并用自己的令牌替换镜像默认值：
 
 ```bash

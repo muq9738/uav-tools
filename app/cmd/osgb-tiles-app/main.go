@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 
 	"github.com/egoist/mygo"
 	"os/signal"
@@ -37,6 +38,7 @@ func init() {
 func main() {
 	if err := run(); err != nil && !errors.Is(err, context.Canceled) {
 		fmt.Fprintln(os.Stderr, "osgb-tiles-app:", err)
+		showStartupError(err)
 		os.Exit(1)
 	}
 }
@@ -44,6 +46,7 @@ func main() {
 func run() error {
 	flags := flag.NewFlagSet("osgb-tiles-app", flag.ContinueOnError)
 	headless := flags.Bool("headless", false, "只启动 HTTP 服务，不打开桌面窗口")
+	browser := flags.Bool("browser", false, "在默认浏览器打开界面；关闭终端或按 Ctrl+C 退出")
 	addr := flags.String("addr", "127.0.0.1:0", "HTTP 监听地址；非本机地址必须同时设置 --token")
 	token := flags.String("token", os.Getenv("OSGB_TILES_TOKEN"), "访问令牌；对外监听时必填")
 	dataDir := flags.String("data-dir", "", "数据目录，保存任务索引与日志")
@@ -54,13 +57,16 @@ func run() error {
 	if err := flags.Parse(os.Args[1:]); err != nil {
 		return err
 	}
+	if *headless && *browser {
+		return errors.New("--headless 与 --browser 不能同时使用")
+	}
 	if *showVersion {
 		fmt.Printf("osgb-tiles-app %s (%s/%s)\n", version, runtime.GOOS, runtime.GOARCH)
 		return nil
 	}
 
-	exec := &runner.Exec{Binary: *sidecar}
-	features := exec.Features()
+	converter := &runner.Exec{Binary: *sidecar}
+	features := converter.Features()
 	if *doctor {
 		fmt.Printf("平台：%s/%s\n", runtime.GOOS, runtime.GOARCH)
 		fmt.Printf("转换器：%s\n", displayPath(features.Path))
@@ -75,7 +81,10 @@ func run() error {
 		return nil
 	}
 	if !features.Available {
-		return fmt.Errorf("%s（osgb-tiles-app --doctor 可查看检查结果）", features.Detail)
+		return fmt.Errorf("%s（请解压完整分发包并保留 bin 目录；--doctor 可查看检查结果）", features.Detail)
+	}
+	if runtime.GOOS == "windows" && !*headless && !*browser && !mygo.WebViewAvailable() {
+		return errors.New("未检测到 Microsoft WebView2 Runtime。\n\n可运行本目录的 Start Browser.cmd，无需安装 WebView2。\n如需桌面窗口，可从 https://go.microsoft.com/fwlink/p/?LinkId=2124703 下载微软安装器，以普通用户身份运行；无需选择“以管理员身份运行”。企业策略可能限制安装")
 	}
 
 	if *dataDir == "" {
@@ -85,7 +94,7 @@ func run() error {
 		}
 		*dataDir = def
 	}
-	manager, err := jobs.New(jobs.Config{DataDir: *dataDir, MaxParallel: *maxParallel, Runner: exec})
+	manager, err := jobs.New(jobs.Config{DataDir: *dataDir, MaxParallel: *maxParallel, Runner: converter})
 	if err != nil {
 		return err
 	}
@@ -95,12 +104,12 @@ func run() error {
 	defer cancel()
 
 	var picker *desktop.Picker
-	if !*headless {
+	if !*headless && !*browser {
 		picker = &desktop.Picker{}
 	}
 	options := api.Options{
 		Manager:     manager,
-		Runner:      exec,
+		Runner:      converter,
 		Web:         web.Files,
 		Version:     version,
 		Token:       *token,
@@ -135,7 +144,22 @@ func run() error {
 
 	url := pageURL(listener.Addr(), *token)
 	log.Printf("界面地址：%s", url)
-	if *headless {
+	if *browser {
+		var command *exec.Cmd
+		switch runtime.GOOS {
+		case "windows":
+			command = exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", url)
+		case "darwin":
+			command = exec.Command("open", url)
+		default:
+			command = exec.Command("xdg-open", url)
+		}
+		if err := command.Run(); err != nil {
+			return fmt.Errorf("打开默认浏览器失败：%w", err)
+		}
+		log.Print("浏览器模式已启动；按 Ctrl+C 停止服务。请手动填写本机输入、输出路径")
+	}
+	if *headless || *browser {
 		<-ctx.Done()
 		return nil
 	}
