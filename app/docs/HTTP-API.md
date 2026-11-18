@@ -1,0 +1,45 @@
+# HTTP API
+
+默认 `127.0.0.1:8990`。显式设置 `--token` 时，接口支持 `Authorization: Bearer <token>` 或 `?token=…`；对外监听必须设置令牌。
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| GET | `/api/health` | 外壳版本与 native 可用性 |
+| GET | `/api/config` | 数据目录、native 路径/能力/默认值、桌面能力 |
+| GET | `/api/doctor` | 数据目录写入与 native 能力检查 |
+| POST | `/api/jobs` | 创建任务 |
+| GET | `/api/jobs` | 任务列表 |
+| GET | `/api/jobs/{id}` | 任务详情与最终报告 |
+| POST | `/api/jobs/{id}/cancel` | 请求取消（含正在暂停和已暂停的任务） |
+| POST | `/api/jobs/{id}/pause` | 暂停排队任务或请求文件边界暂停 |
+| POST | `/api/jobs/{id}/resume` | 将已暂停任务重新排队，必要时续用检查点 |
+| GET | `/api/jobs/{id}/logs?after=0&limit=200` | 增量日志与下一游标 |
+| GET | `/api/jobs/{id}/events?after=0` | SSE 状态、进度和日志 |
+| POST | `/api/pick-directory` | 桌面目录选择；无桌面支持 501 |
+| POST | `/api/jobs/{id}/reveal` | 打开输出目录；无桌面支持 501，目录未创建 409 |
+
+创建示例：
+
+```json
+{"input":"/data/osgb","output":"/data/new-tiles","threads":2,"geometry":"meshopt","memoryBudgetMiB":512,"srs":"EPSG:32651","origin":"500000,0,10","texturePixels":false}
+```
+
+可选字段还包括 `rebuildTop`（默认 false）、`topSealDistance`（重建顶层前的边界焊缝距离，0..2 米，默认 2，0 表示不焊）、`textureFormat`（默认 `original`，另支持 `uastc` / `etc1s`）、`dracoSpeed`（默认 5，支持 0/5/10）；`geometry` 另支持 `draco`。这些选项及组合明确有损，保留保真默认；Top 只新增祖先，不删除原子树。参数会持久化并进入 native 检查点身份；旧任务 Spec 缺省字段按保真默认解释，转换器版本或二进制变化的检查点仍按身份合同拒绝复用。
+
+input 可以是目录或索引 `.osgb`。除了 input/output 均可省略：默认 threads=2、geometry=meshopt、memoryBudgetMiB=0、texturePixels=false；坐标由 native 读取 metadata。0 预算代表不限，不保证单文件峰值。未知字段与无效参数返回 400。
+
+任务状态：queued、running、pausing、paused、succeeded、failed、canceled。暂停不是终态，只有 succeeded、failed、canceled 是终态。`succeeded` 是完整转换执行成功，不代表画质与性能验收通过。`progress.source` 为 converter，done 是 native 已处理工作项，total=0 表示未知，此时应显示处理数而不是虚构百分比。
+
+```json
+{"id":"…","state":"running","progress":{"stage":"convert","done":147,"total":0,"unit":"files","source":"converter"}}
+```
+
+暂停和继续接口无需请求体，成功返回 202 和当前任务快照；未知任务返回 404，不合法状态返回 409。只有 `/api/config` 的 `sidecar.available` 与 `sidecar.pauseResume` 均为 true 时才支持操作，否则返回 501。暂停对 pausing/paused 幂等；继续仅接受 paused。
+
+排队暂停直接变为 paused，首次执行不传 `--resume`。运行暂停先变为 pausing，继续接收进度与日志，待 native 退出 75 且暂停报告校验通过才变为 paused；如果转换已经正常完成，则仍按成功合同判断。暂停不会取消进程 context。取消对 queued/running/pausing/paused 生效，取消后不能继续。
+
+任务可包含管理器分配的 `checkpointDir`、`resumeRequired` 和最近一次 `pausedAt`；这些字段不能放入创建请求。已实际转换且确认暂停的任务 `resumeRequired=true`，继续时复用原任务参数与检查点。paused 的 `finishedAt` 为空；运行后暂停的 `exitCode=75` 和 `report.status=paused` 代表上一轮暂停结果，尚未启动的排队暂停没有退出码或报告。继续会清除上一轮报告与退出码。
+
+SSE 含 state/progress/log 等通知及任务快照，连接在 paused 时保持，可以观察后续继续。日志按 seq 增量查询，继续及重启不重置序号。重启保留 paused 历史，不自动排队；queued/running/pausing 标为中断失败，不能将未确认的暂停当成有效检查点。详见 [App 暂停与续转规格](PAUSE-RESUME.md)。
+
+App/native 的事件、取消和分发合同见 [NATIVE-CONTRACT](NATIVE-CONTRACT.md)。

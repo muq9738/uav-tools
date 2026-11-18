@@ -1,0 +1,200 @@
+{
+  "schema": 1,
+  "policy": "rgb565-bit-replicate-floor-v1",
+  "gpuEquivalent": false,
+  "license": "Apache-2.0; original project-authored vectors, no imported decoder code",
+  "sources": [
+    "https://registry.khronos.org/OpenGL/extensions/EXT/EXT_texture_compression_s3tc.txt",
+    "https://registry.khronos.org/OpenGL/extensions/EXT/EXT_texture_sRGB.txt"
+  ],
+  "cases": [
+    {
+      "name": "bc1-four-colors",
+      "basis": "S3TC Appendix: red/blue endpoints and exactly divisible thirds",
+      "glFormat": 33777, "width": 4, "height": 4,
+      "data": [0,248,31,0,228,228,228,228],
+      "expectedRgba": [
+        255,0,0,255, 0,0,255,255, 170,0,85,255, 85,0,170,255,
+        255,0,0,255, 0,0,255,255, 170,0,85,255, 85,0,170,255,
+        255,0,0,255, 0,0,255,255, 170,0,85,255, 85,0,170,255,
+        255,0,0,255, 0,0,255,255, 170,0,85,255, 85,0,170,255
+      ]
+    },
+    {
+      "name": "bc1-rgba-three-colors-transparent",
+      "basis": "S3TC Appendix: transparent black; 127 midpoint is candidate floor policy",
+      "glFormat": 33777, "width": 4, "height": 4,
+      "data": [0,0,255,255,228,228,228,228],
+      "expectedRgba": [
+        0,0,0,255, 255,255,255,255, 127,127,127,255, 0,0,0,0,
+        0,0,0,255, 255,255,255,255, 127,127,127,255, 0,0,0,0,
+        0,0,0,255, 255,255,255,255, 127,127,127,255, 0,0,0,0,
+        0,0,0,255, 255,255,255,255, 127,127,127,255, 0,0,0,0
+      ]
+    },
+    {
+      "name": "bc1-rgb-three-colors-opaque-black",
+      "basis": "S3TC issue 4: same block as RGBA but index 3 is opaque; floor midpoint",
+      "glFormat": 33776, "width": 4, "height": 4,
+      "data": [0,0,255,255,228,228,228,228],
+      "expectedRgba": [
+        0,0,0,255, 255,255,255,255, 127,127,127,255, 0,0,0,255,
+        0,0,0,255, 255,255,255,255, 127,127,127,255, 0,0,0,255,
+        0,0,0,255, 255,255,255,255, 127,127,127,255, 0,0,0,255,
+        0,0,0,255, 255,255,255,255, 127,127,127,255, 0,0,0,255
+      ]
+    },
+    {
+      "name": "bc1-equal-endpoints",
+      "basis": "S3TC Appendix: equality uses three-color mode, not four-color mode",
+      "glFormat": 33777, "width": 4, "height": 4,
+      "data": [224,7,224,7,228,228,228,228],
+      "expectedRgba": [
+        0,255,0,255, 0,255,0,255, 0,255,0,255, 0,0,0,0,
+        0,255,0,255, 0,255,0,255, 0,255,0,255, 0,0,0,0,
+        0,255,0,255, 0,255,0,255, 0,255,0,255, 0,0,0,0,
+        0,255,0,255, 0,255,0,255, 0,255,0,255, 0,0,0,0
+      ]
+    },
+    {
+      "name": "bc2-reversed-endpoints-all-alpha-nibbles",
+      "basis": "S3TC issue 6: forced four colors; Appendix: nibbles 0..15 times 17",
+      "glFormat": 33778, "width": 4, "height": 4,
+      "data": [16,50,84,118,152,186,220,254,0,0,255,255,228,228,228,228],
+      "expectedRgba": [
+        0,0,0,0, 255,255,255,17, 85,85,85,34, 170,170,170,51,
+        0,0,0,68, 255,255,255,85, 85,85,85,102, 170,170,170,119,
+        0,0,0,136, 255,255,255,153, 85,85,85,170, 170,170,170,187,
+        0,0,0,204, 255,255,255,221, 85,85,85,238, 170,170,170,255
+      ]
+    },
+    {
+      "name": "bc2-zero-alpha-keeps-rgb",
+      "basis": "S3TC DXT3 alpha is independent of RGB; no premultiply",
+      "glFormat": 33778, "width": 1, "height": 1,
+      "data": [0,0,0,0,0,0,0,0,0,248,0,248,255,255,255,255],
+      "expectedRgba": [255,0,0,0]
+    },
+    {
+      "name": "bc3-eight-alpha-exact",
+      "basis": "S3TC Appendix: alpha 252/0 gives exact multiples of 36; all 48 index bits",
+      "glFormat": 33779, "width": 4, "height": 4,
+      "data": [252,0,136,198,250,136,198,250,0,248,31,0,228,228,228,228],
+      "expectedRgba": [
+        255,0,0,252, 0,0,255,0, 170,0,85,216, 85,0,170,180,
+        255,0,0,144, 0,0,255,108, 170,0,85,72, 85,0,170,36,
+        255,0,0,252, 0,0,255,0, 170,0,85,216, 85,0,170,180,
+        255,0,0,144, 0,0,255,108, 170,0,85,72, 85,0,170,36
+      ]
+    },
+    {
+      "name": "bc3-six-alpha-reversed-colors",
+      "basis": "S3TC Appendix: alpha 10/110, four middle values 30/50/70/90 then 0/255",
+      "glFormat": 33779, "width": 4, "height": 4,
+      "data": [10,110,136,198,250,136,198,250,0,0,255,255,228,228,228,228],
+      "expectedRgba": [
+        0,0,0,10, 255,255,255,110, 85,85,85,30, 170,170,170,50,
+        0,0,0,70, 255,255,255,90, 85,85,85,0, 170,170,170,255,
+        0,0,0,10, 255,255,255,110, 85,85,85,30, 170,170,170,50,
+        0,0,0,70, 255,255,255,90, 85,85,85,0, 170,170,170,255
+      ]
+    },
+    {
+      "name": "bc3-equal-alpha-and-colors",
+      "basis": "S3TC Appendix: equal alpha uses six-alpha branch; equal colors remain opaque palette",
+      "glFormat": 33779, "width": 4, "height": 4,
+      "data": [64,64,136,198,250,136,198,250,224,7,224,7,228,228,228,228],
+      "expectedRgba": [
+        0,255,0,64, 0,255,0,64, 0,255,0,64, 0,255,0,64,
+        0,255,0,64, 0,255,0,64, 0,255,0,0, 0,255,0,255,
+        0,255,0,64, 0,255,0,64, 0,255,0,64, 0,255,0,64,
+        0,255,0,64, 0,255,0,64, 0,255,0,0, 0,255,0,255
+      ]
+    },
+    {
+      "name": "bc1-third-rounding-probe",
+      "basis": "Candidate policy only: RGB565 R=2 expands to 16; floor(32/3)=10, nearest=11",
+      "glFormat": 33777, "width": 1, "height": 1,
+      "data": [0,16,0,0,170,170,170,170],
+      "expectedRgba": [10,0,0,255]
+    },
+    {
+      "name": "bc1-half-rounding-probe",
+      "basis": "Candidate policy only: floor(255/2)=127, nearest=128",
+      "glFormat": 33777, "width": 1, "height": 1,
+      "data": [0,0,255,255,170,170,170,170],
+      "expectedRgba": [127,127,127,255]
+    },
+    {
+      "name": "bc1-endpoint-expansion-probe",
+      "basis": "Candidate policy only: RGB565 (3,5,7) bit-replicates to (24,20,57), normalized nearest=(25,20,58)",
+      "glFormat": 33777, "width": 1, "height": 1,
+      "data": [167,24,0,0,0,0,0,0],
+      "expectedRgba": [24,20,57,255]
+    },
+    {
+      "name": "bc3-alpha-rounding-probe",
+      "basis": "Candidate floor policy: alpha 255/0 -> 255,0,218,182,145,109,72,36",
+      "glFormat": 33779, "width": 4, "height": 4,
+      "data": [255,0,136,198,250,136,198,250,0,248,0,0,0,0,0,0],
+      "expectedRgba": [
+        255,0,0,255, 255,0,0,0, 255,0,0,218, 255,0,0,182,
+        255,0,0,145, 255,0,0,109, 255,0,0,72, 255,0,0,36,
+        255,0,0,255, 255,0,0,0, 255,0,0,218, 255,0,0,182,
+        255,0,0,145, 255,0,0,109, 255,0,0,72, 255,0,0,36
+      ]
+    },
+    {
+      "name": "bc3-six-alpha-rounding-probe",
+      "basis": "Candidate floor policy: alpha 10/113 -> 10,113,30,51,71,92,0,255",
+      "glFormat": 33779, "width": 4, "height": 4,
+      "data": [10,113,136,198,250,136,198,250,0,248,0,0,0,0,0,0],
+      "expectedRgba": [
+        255,0,0,10, 255,0,0,113, 255,0,0,30, 255,0,0,51,
+        255,0,0,71, 255,0,0,92, 255,0,0,0, 255,0,0,255,
+        255,0,0,10, 255,0,0,113, 255,0,0,30, 255,0,0,51,
+        255,0,0,71, 255,0,0,92, 255,0,0,0, 255,0,0,255
+      ]
+    },
+    {
+      "name": "bc1-top-left-row-order",
+      "basis": "S3TC texel control codes 2*(4*y+x), preserving supplied origin",
+      "glFormat": 33777, "width": 4, "height": 4, "origin": "top-left",
+      "data": [0,248,31,0,0,85,170,255],
+      "expectedRgba": [
+        255,0,0,255, 255,0,0,255, 255,0,0,255, 255,0,0,255,
+        0,0,255,255, 0,0,255,255, 0,0,255,255, 0,0,255,255,
+        170,0,85,255, 170,0,85,255, 170,0,85,255, 170,0,85,255,
+        85,0,170,255, 85,0,170,255, 85,0,170,255, 85,0,170,255
+      ]
+    },
+    {
+      "name": "srgb-bc1-opaque-black",
+      "basis": "EXT_texture_sRGB issue 10 plus S3TC RGB index 3 opaque black",
+      "glFormat": 35916, "width": 1, "height": 1,
+      "data": [0,0,255,255,255,255,255,255],
+      "expectedRgba": [0,0,0,255]
+    },
+    {
+      "name": "srgb-bc1-transparent-black",
+      "basis": "EXT_texture_sRGB issue 3: alpha stays linear; RGBA index 3 transparent black",
+      "glFormat": 35917, "width": 1, "height": 1,
+      "data": [0,0,255,255,255,255,255,255],
+      "expectedRgba": [0,0,0,0]
+    },
+    {
+      "name": "srgb-bc2-coded-values",
+      "basis": "EXT_texture_sRGB issue 10: return coded 85, not linearized RGB; alpha 119",
+      "glFormat": 35918, "width": 1, "height": 1,
+      "data": [119,119,119,119,119,119,119,119,0,0,255,255,170,170,170,170],
+      "expectedRgba": [85,85,85,119]
+    },
+    {
+      "name": "srgb-bc3-coded-values",
+      "basis": "EXT_texture_sRGB issue 10: return coded 170; alpha endpoint 128 unchanged",
+      "glFormat": 35919, "width": 1, "height": 1,
+      "data": [128,0,0,0,0,0,0,0,0,0,255,255,255,255,255,255],
+      "expectedRgba": [170,170,170,128]
+    }
+  ]
+}

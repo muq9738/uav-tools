@@ -1,0 +1,152 @@
+name: Native and App
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: '打包目标；all 表示全部平台'
+        required: true
+        default: 'windows-amd64'
+        type: choice
+        options:
+          - windows-amd64
+          - darwin-arm64
+          - darwin-amd64
+          - linux-amd64
+          - linux-arm64
+          - all
+
+jobs:
+  # 推送与 PR 只做契约测试和单平台 native 构建，避免私有库 Actions 额度被
+  # 五平台全矩阵（macOS 10 倍、Windows 2 倍计费）快速耗尽。
+  verify:
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+      - name: Distribution contract tests
+        run: python -m unittest discover -s app/tests -p 'test_*.py'
+      - name: Linux SDK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build g++ sqlite3 libsqlite3-dev libopenscenegraph-dev libpng-dev libxml2-dev libturbojpeg0-dev
+          echo 'OSGB_SDK=/usr' >> "$GITHUB_ENV"
+      - name: Build and test native
+        run: python app/scripts/build.py --sdk-prefix "$OSGB_SDK" --skip-desktop
+
+  prepare:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - id: set
+        env:
+          TARGET: ${{ inputs.target }}
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          items = [
+              {"os": "macos-14", "platform": "darwin-arm64", "go": "darwin/arm64"},
+              {"os": "macos-15-intel", "platform": "darwin-amd64", "go": "darwin/amd64"},
+              {"os": "ubuntu-24.04", "platform": "linux-amd64", "go": "linux/amd64"},
+              {"os": "ubuntu-24.04-arm", "platform": "linux-arm64", "go": "linux/arm64"},
+              {"os": "windows-2022", "platform": "windows-amd64", "go": "windows/amd64"},
+          ]
+          target = os.environ["TARGET"]
+          selected = items if target == "all" else [i for i in items if i["platform"] == target]
+          print("matrix=" + json.dumps({"include": selected}))
+          PY
+
+  package:
+    needs: prepare
+    if: github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+        with:
+          arch: x64
+      - name: Distribution contract tests
+        shell: bash
+        run: python -m unittest discover -s app/tests -p 'test_*.py' -v
+      - name: macOS SDK
+        if: runner.os == 'macOS'
+        run: |
+          brew install openscenegraph libpng libxml2 sqlite ninja
+          echo "OSGB_SDK=$(brew --prefix)" >> "$GITHUB_ENV"
+      - name: Linux SDK
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build g++ python3 patchelf sqlite3 libsqlite3-dev libopenscenegraph-dev libpng-dev libxml2-dev libturbojpeg0-dev
+          echo 'OSGB_SDK=/usr' >> "$GITHUB_ENV"
+      - name: Windows SDK
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          git clone https://github.com/microsoft/vcpkg app/sdk/toolchain
+          git -C app/sdk/toolchain checkout 84bab45d415d22042bd0b9081aea57f362da3f35
+          & app/sdk/toolchain/bootstrap-vcpkg.bat -disableMetrics
+          & app/sdk/toolchain/vcpkg.exe install --triplet x64-windows --x-manifest-root=app/sdk --x-install-root=app/sdk/installed
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "OSGB_SDK=$((Resolve-Path app/sdk/installed/x64-windows).Path)" >> $env:GITHUB_ENV
+      - name: Build and collect runtime
+        shell: bash
+        run: |
+          args=()
+          if [ "$RUNNER_OS" = Windows ]; then args+=(--toolchain app/sdk/toolchain/scripts/buildsystems/vcpkg.cmake); fi
+          python app/scripts/build.py --sdk-prefix "$OSGB_SDK" --skip-desktop "${args[@]}"
+          python app/scripts/build.py --verify-package "app/dist/${{ matrix.platform }}/portable"
+      - name: App and CLI parity in packaged environment
+        shell: bash
+        run: |
+          input=$(python -c "from pathlib import Path; print(next(Path('app/build').glob('*/test-data-*/texture+alpha.osgb')).resolve())")
+          python app/tests/verify_parity.py --package "app/dist/${{ matrix.platform }}/portable" --input "$input" --srs ENU:31.2,121.4,10 --evidence .agents-debug/ci/parity
+      - name: Desktop package
+        working-directory: app
+        env:
+          GOMAXPROCS: '2'
+        run: go tool mygo build --platform ${{ matrix.go }}
+      - name: Seal and verify desktop resources
+        shell: bash
+        run: python app/scripts/build.py --finalize-package "app/dist/${{ matrix.platform }}"
+      - name: Verify packaged macOS disk image
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          mount_dir="$RUNNER_TEMP/osgb-dmg"
+          mkdir -p "$mount_dir"
+          attached=0
+          cleanup() { if [ "$attached" = 1 ]; then hdiutil detach "$mount_dir" >/dev/null; fi; }
+          trap cleanup EXIT
+          hdiutil attach -readonly -nobrowse -mountpoint "$mount_dir" app/dist/${{ matrix.platform }}/*.dmg
+          attached=1
+          app_path=$(find "$mount_dir" -maxdepth 1 -name '*.app' -print -quit)
+          test -n "$app_path"
+          python app/scripts/build.py --verify-package "$app_path"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: osgb-tiles-${{ matrix.platform }}
+          path: |
+            app/dist/${{ matrix.platform }}/
+            .agents-debug/ci/parity/

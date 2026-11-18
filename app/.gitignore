@@ -1,0 +1,14 @@
+dist/
+.agents-debug/
+*.log
+.DS_Store
+/osgb-tiles-app
+/osgb-tiles-app.exe
+/resources/darwin-*/
+/resources/linux-*/
+/resources/windows-*/
+/build/
+/sdk/installed/
+/sdk/toolchain/
+/sdk/vcpkg_installed/
+**/__pycache__/

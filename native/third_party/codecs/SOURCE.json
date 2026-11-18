@@ -1,0 +1,35 @@
+[
+  {
+    "name": "draco",
+    "version": "1.5.7",
+    "commit": "8786740086a9f4d83f44aa83badfbea4dce7a1b5",
+    "repository": "https://github.com/google/draco",
+    "license": "Apache-2.0",
+    "licenseSha256": "d3709b0fb4b8a94bbb1d02b8a2e484f258b0d9c5c5a01f940391f3fe662cd1a4"
+  },
+  {
+    "name": "basis-universal",
+    "version": "1.16.4",
+    "commit": "900e40fb5d2502927360fe2f31762bdbb624455f",
+    "repository": "https://github.com/BinomialLLC/basis_universal",
+    "license": "Apache-2.0",
+    "licenseSha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+  },
+  {
+    "name": "basis-zstd",
+    "version": "bundled with basis-universal 1.16.4",
+    "commit": "900e40fb5d2502927360fe2f31762bdbb624455f",
+    "repository": "https://github.com/BinomialLLC/basis_universal",
+    "sourcePath": "zstd/",
+    "license": "BSD-3-Clause",
+    "licenseSha256": "2c1a7fa704df8f3a606f6fc010b8b5aaebf403f3aeec339a12048f1ba7331a0b"
+  },
+  {
+    "name": "basis-pvpngreader",
+    "version": "bundled with basis-universal 1.16.4",
+    "commit": "900e40fb5d2502927360fe2f31762bdbb624455f",
+    "sourcePath": "encoder/pvpngreader.cpp",
+    "license": "Unlicense",
+    "licenseSha256": "0c687aa697ab399316e6de6d1a3ad7bea52bbbe095727cfe6d6313ac2f21d614"
+  }
+]

@@ -1,0 +1,22 @@
+{
+  "name": "OSGB 转 3D Tiles",
+  "slug": "osgb-tiles",
+  "identifier": "io.github.muq9738.uav-tools",
+  "version": "0.1.0",
+  "copyright": "© 2026 uav-tools contributors",
+  "publisher": "uav-tools",
+  "icon": "resources/icon.png",
+  "main": "./cmd/osgb-tiles-app",
+  "out": "dist",
+  "macos": {
+    "minimumSystemVersion": "13.0",
+    "signingIdentity": "-",
+    "infoPlist": {
+      "LSApplicationCategoryType": "public.app-category.graphics-design",
+      "CFBundleDevelopmentRegion": "zh-Hans",
+      "CFBundleLocalizations": [
+        "zh-Hans"
+      ]
+    }
+  }
+}

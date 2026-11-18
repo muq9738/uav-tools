@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 1,
+  "sharpVersion": "0.32.6",
+  "helperNames": ["pht", "I8e", "hht", "dht", "M8e", "w8e", "mht", "_ht", "O8e"],
+  "cases": [
+    {
+      "name": "raw-rgba-alpha",
+      "reader": {"read": true, "observationCount": 1, "texture": true, "image": true, "width": 2, "height": 2, "depth": 1, "pixelFormat": 6408, "dataType": 5121, "packing": 1, "rowLength": 0, "pixelBits": 32, "byteLength": 16, "dataSha256": "75ae5120aa2c601a2f179a6b7351fdd64223744942423fb066227b57c7a91ccf"},
+      "helper": {"rawChannels": 4, "rawEncoder": [255, 0, 0, 0, 0, 255, 0, 64, 0, 0, 255, 128, 255, 255, 0, 255]},
+      "sharp": {"differingPixels": 0, "decodedRgbaEqualsFixture": true, "decodedChannels": 4, "jpeg100Channels": 3, "jpeg100Width": 2, "jpeg100Height": 2},
+      "comparison": "equal"
+    },
+    {
+      "name": "parent-texture",
+      "reader": {"read": true, "observationCount": 1, "texture": true, "image": true, "width": 2, "height": 2, "depth": 1, "pixelFormat": 6408, "dataType": 5121, "packing": 1, "rowLength": 0, "pixelBits": 32, "byteLength": 16, "dataSha256": "75ae5120aa2c601a2f179a6b7351fdd64223744942423fb066227b57c7a91ccf"},
+      "helper": {"rawChannels": 4, "rawEncoder": [255, 0, 0, 0, 0, 255, 0, 64, 0, 0, 255, 128, 255, 255, 0, 255]},
+      "sharp": {"differingPixels": 0, "decodedRgbaEqualsFixture": true, "decodedChannels": 4, "jpeg100Channels": 3, "jpeg100Width": 2, "jpeg100Height": 2},
+      "comparison": "equal"
+    },
+    {
+      "name": "raw-bgra",
+      "reader": {"read": true, "observationCount": 1, "texture": true, "image": true, "width": 2, "height": 2, "depth": 1, "pixelFormat": 32993, "dataType": 5121, "packing": 1, "rowLength": 0, "pixelBits": 32, "byteLength": 16, "dataSha256": "e547d08425134f6729f4ce7aeed6ecc44db7d55396455bb2ef5311e8a8a67166"},
+      "helper": {"rawChannels": 4, "rawEncoder": [0, 0, 255, 0, 0, 255, 0, 64, 255, 0, 0, 128, 0, 255, 255, 255]},
+      "sharp": {"differingPixels": 3, "decodedRgbaEqualsFixture": false, "decodedChannels": 4, "jpeg100Channels": 3, "jpeg100Width": 2, "jpeg100Height": 2},
+      "comparison": "different"
+    },
+    {
+      "name": "raw-gray",
+      "reader": {"read": true, "observationCount": 1, "texture": true, "image": true, "width": 2, "height": 2, "depth": 1, "pixelFormat": 6409, "dataType": 5121, "packing": 1, "rowLength": 0, "pixelBits": 8, "byteLength": 4, "dataSha256": "81f9456ee0bb909b7fb7c887c21c21f9fc45430e881dd5d92450609410fc3936"},
+      "helper": {"rawChannels": 1, "rawEncoder": [0, 64, 128, 255]},
+      "sharp": {"differingPixels": 0, "decodedRgbaEqualsFixture": true, "decodedChannels": 4, "jpeg100Channels": 3, "jpeg100Width": 2, "jpeg100Height": 2},
+      "comparison": "equal"
+    },
+    {
+      "name": "raw-gray-alpha",
+      "reader": {"read": true, "observationCount": 1, "texture": true, "image": true, "width": 2, "height": 2, "depth": 1, "pixelFormat": 6410, "dataType": 5121, "packing": 1, "rowLength": 0, "pixelBits": 16, "byteLength": 8, "dataSha256": "36045398fa581ddf3468daa20d31b8dc8aacb49eb18b50dcd3bee28972912b26"},
+      "helper": {"rawChannels": null, "rawEncoder": null},
+      "sharp": {"error": "Unsupported raw OSGB image channel count: 16"},
+      "comparison": "target_error_native_success"
+    },
+    {
+      "name": "rgb-row-padding",
+      "reader": {"read": true, "observationCount": 1, "texture": true, "image": true, "width": 3, "height": 2, "depth": 1, "pixelFormat": 6407, "dataType": 5121, "packing": 4, "rowLength": 0, "pixelBits": 24, "byteLength": 24, "dataSha256": "7d4d27f4127bc39ddfe07a8b0e75a5cb74640007c2880e4419f1d4938ed627ce"},
+      "helper": {"rawChannels": 3, "rawEncoder": [255, 0, 0, 0, 255, 0, 0, 0, 255, 41, 51, 61, 255, 255, 0, 0, 255, 255]},
+      "sharp": {"differingPixels": 3, "decodedRgbaEqualsFixture": false, "decodedChannels": 4, "jpeg100Channels": 3, "jpeg100Width": 3, "jpeg100Height": 2},
+      "comparison": "different"
+    },
+    {
+      "name": "rgb-row-length",
+      "reader": {"read": true, "observationCount": 1, "texture": true, "image": true, "width": 2, "height": 2, "depth": 1, "pixelFormat": 6407, "dataType": 5121, "packing": 4, "rowLength": 0, "pixelBits": 24, "byteLength": 16, "dataSha256": "124fc6875e1065bc5e8891413600b2dcab363291d85c58663777855135775590"},
+      "helper": {"rawChannels": 3, "rawEncoder": [255, 0, 0, 0, 255, 0, 87, 87, 255, 255, 0, 0]},
+      "sharp": {"differingPixels": 2, "decodedRgbaEqualsFixture": false, "decodedChannels": 4, "jpeg100Channels": 3, "jpeg100Width": 2, "jpeg100Height": 2},
+      "comparison": "different"
+    },
+    {
+      "name": "missing-image",
+      "reader": {"read": true, "observationCount": 1, "texture": true, "image": false},
+      "helper": {"rawChannels": null, "rawEncoder": null},
+      "sharp": null,
+      "comparison": "target_missing_native_rejected"
+    },
+    {
+      "name": "disabled-missing-image",
+      "reader": {"read": true, "observationCount": 1, "texture": true, "image": false},
+      "helper": {"rawChannels": null, "rawEncoder": null},
+      "sharp": null,
+      "comparison": "target_missing_native_success_without_texture"
+    },
+    {
+      "name": "dxt1-transparent-index",
+      "reader": {"read": true, "observationCount": 1, "texture": true, "image": true, "width": 4, "height": 4, "depth": 1, "pixelFormat": 33777, "dataType": 5121, "packing": 1, "rowLength": 0, "pixelBits": 4, "byteLength": 8, "dataSha256": "0df26faa23256f168ca98f8fcb1f0d0723b1a73df3dae97bbbc336753b62b0f6"},
+      "helper": {"rawChannels": null, "rawEncoder": null, "dxt": {"width": 4, "height": 4, "channels": 3}, "dxtPrefixRepeatedPixel": [0, 0, 0]},
+      "sharp": {"differingPixels": 16, "decodedRgbaRepeatedPixel": [0, 0, 0, 255], "decodedChannels": 4, "jpeg100Channels": 3, "jpeg100Width": 4, "jpeg100Height": 4},
+      "comparison": "target_pixels_native_rejected"
+    },
+    {
+      "name": "dxt1-size-over-2048",
+      "reader": {"read": true, "observationCount": 1, "texture": true, "image": true, "width": 2052, "height": 4, "depth": 1, "pixelFormat": 33777, "dataType": 5121, "packing": 1, "rowLength": 0, "pixelBits": 4, "byteLength": 4104},
+      "helper": {"rawChannels": null, "rawEncoder": null, "dxt": {"width": 1026, "height": 2, "channels": 3}},
+      "sharp": {"differingPixels": null, "decodedChannels": 4, "jpeg100Channels": 3, "jpeg100Width": 1026, "jpeg100Height": 2},
+      "comparison": "target_pixels_native_rejected"
+    },
+    {
+      "name": "custom-mip-chain",
+      "reader": {"read": true, "observationCount": 1, "texture": true, "image": true, "width": 2, "height": 2, "depth": 1, "pixelFormat": 6408, "dataType": 5121, "packing": 1, "rowLength": 0, "pixelBits": 32, "byteLength": 16, "dataSha256": "75ae5120aa2c601a2f179a6b7351fdd64223744942423fb066227b57c7a91ccf"},
+      "helper": {"rawChannels": 4, "rawEncoder": [255, 0, 0, 0, 0, 255, 0, 64, 0, 0, 255, 128, 255, 255, 0, 255]},
+      "sharp": {"differingPixels": 0, "decodedRgbaEqualsFixture": true, "decodedChannels": 4, "jpeg100Channels": 3, "jpeg100Width": 2, "jpeg100Height": 2},
+      "comparison": "target_base_pixels_native_rejected_mip"
+    },
+    {
+      "name": "external-missing",
+      "reader": {"read": true, "observationCount": 1, "texture": true, "image": false},
+      "helper": {"rawChannels": null, "rawEncoder": null},
+      "sharp": null,
+      "comparison": "target_missing_native_rejected"
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+[
+  {
+    "name": "meshoptimizer.h",
+    "url": "https://raw.githubusercontent.com/zeux/meshoptimizer/v0.25/src/meshoptimizer.h",
+    "bytes": 87147,
+    "sha256": "c896a6d31dae787202172098e560eeef7780519e5ca085cf1a03e3f07ef0bb8a"
+  },
+  {
+    "name": "vertexcodec.cpp",
+    "url": "https://raw.githubusercontent.com/zeux/meshoptimizer/v0.25/src/vertexcodec.cpp",
+    "bytes": 56847,
+    "sha256": "ed4008e95146941383e90fd0c6761ef94deb7c5e35d00c01dd9d7383476d2ad6"
+  },
+  {
+    "name": "indexcodec.cpp",
+    "url": "https://raw.githubusercontent.com/zeux/meshoptimizer/v0.25/src/indexcodec.cpp",
+    "bytes": 20922,
+    "sha256": "d4e02267339f90cd4a76fddb007bae98a42e1b4dcb819e31a1c9e273c56c3f48"
+  },
+  {
+    "name": "allocator.cpp",
+    "url": "https://raw.githubusercontent.com/zeux/meshoptimizer/v0.25/src/allocator.cpp",
+    "bytes": 552,
+    "sha256": "0bff407ee165d338026badacce8bd37320372cc687631a2a8054afa7147f1e26"
+  },
+  {
+    "name": "LICENSE.md",
+    "url": "https://raw.githubusercontent.com/zeux/meshoptimizer/v0.25/LICENSE.md",
+    "bytes": 1079,
+    "sha256": "e4a26033e3551fb2722888949fbb41e77aee628e8e8f04dcffeee301aa7e5634"
+  }
+]

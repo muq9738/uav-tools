@@ -1,0 +1,6 @@
+execute_process(COMMAND otool -L "${BINARY}" OUTPUT_VARIABLE libraries COMMAND_ERROR_IS_FATAL ANY)
+string(REGEX MATCHALL "@@HOMEBREW_PREFIX@@/[^ \t\n]+" placeholders "${libraries}")
+foreach(old IN LISTS placeholders)
+  get_filename_component(name "${old}" NAME)
+  execute_process(COMMAND install_name_tool -change "${old}" "@rpath/${name}" "${BINARY}" COMMAND_ERROR_IS_FATAL ANY)
+endforeach()
