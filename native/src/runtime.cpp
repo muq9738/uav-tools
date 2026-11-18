@@ -21,10 +21,11 @@ Json capabilities() {
     Options defaults;
     return {{"name","osgb-tiles"},{"version",NATIVE_VERSION},{"protocolVersion",1},
         {"jsonEvents",true},{"cancelFile",true},{"pauseResume",true},{"rebuildTop",true},{"topSealDistance",true},{"topAlgorithm","ancestor-rebuild-v1"},
+        {"preview",true},{"previewAlgorithm","mesh-preview-v1"},{"previewDefaults",{{"triangleBudget",100000},{"atlasPageLimit",4096},{"geometry","meshopt"},{"texture","uastc"},{"qualityProfile","preview-uastc-very-slow"}}},
         {"geometryFormats",{"raw","meshopt","draco"}},{"textureFormats",{"original","uastc","etc1s"}},
         {"dracoSpeeds",{0,5,10}},{"codecs",{{"draco","1.5.7"},{"basisUniversal","1.16.4"}}},
         {"defaults",{{"threads",defaults.threads},{"geometry",defaults.compressGeometry?"meshopt":"raw"},
-                     {"memoryBudgetMiB",0},{"texturePixels",false},{"rebuildTop",false},{"topSealDistance",2.0},{"textureFormat","original"},{"dracoSpeed",5}}}};
+                     {"memoryBudgetMiB",0},{"texturePixels",false},{"rebuildTop",false},{"preview",false},{"topSealDistance",2.0},{"textureFormat","original"},{"dracoSpeed",5}}}};
 }
 namespace {
 fs::path executablePath(const fs::path& executable) {

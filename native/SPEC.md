@@ -88,6 +88,19 @@ KTX2-UASTC、KTX2-ETC1S）均为显式选项且默认关闭，详见下文「可
 四项参数均进入检查点身份与 App 能力协商，默认关闭；开启后报告中 `sourceExact` 为 false，
 原始内容是否逐字节保留由单独的 `sourceContentsExact` 表达。
 
+**轻量预览（`--preview`）**：与主产物相互独立，主产物的保真结论、编码和误差不变。显示前沿
+逐内容读取源网格，按输入面数预算（默认 10 万）分配目标；大场景按空间中心轴切分为浅层空间块
+（最多 32 块），不复制原 OSGB 的深层 LOD。每块只在处理时驻留该源文件网格，简化后立即释放，
+再进入图集与 GLB 写出。几何使用受材质与 UV 接缝约束的 QEM（拒绝翻面、保持边界与颜色分区），
+写出 Meshopt、FLOAT 位置/UV、无 NORMAL、`KHR_materials_unlit`；纹理按内容去重、按使用方式
+图集化（单页上限 4096，放不下增加页），重复/镜像或越界 UV 保留独立采样页以免串色，并使用
+高质量 UASTC（very slow 档、完整 mip 链、保留 alpha）。产物位于 `preview/`，入口
+`preview/tileset.json`，详细统计与警告写入 `preview/preview-report.json`，主报告
+`conversion-report.json` 增加独立 `preview` 摘要。预览参数与 `mesh-preview-v1` 进入检查点身份；
+暂停、取消与失败清理预览暂存；两套产物同一暂存目录发布，任一套校验失败都不能标记完整成功。
+预览根 `geometricError` 必须为正：Cesium 在根节点误差为 0 时会跳过整棵子树。CLI 默认关闭，
+App 新建任务默认开启。
+
 **远景层重建（`--rebuild-top`）**：源根内容前沿 → 间距统计空间分组 → 目标面数取成功输入面数平均值
 向上取整 → 相邻开口边界焊接（合并距离 ≤2 m、垂距 ≤6 m、链长 ≥5，报告 `mergePairs`/`welds`/
 `maxMergeDistanceMeters`）→ 受材质与边界约束的平面 QEM（拒绝翻面、保持材质/颜色分区）→

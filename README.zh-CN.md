@@ -98,10 +98,17 @@ new-tiles/
 ├── content/*.glb            # 几何与材质内容
 ├── textures/*               # 原图或 KTX2 纹理
 ├── tiles/*.json             # 逐源文件诊断清单
-└── conversion-report.json   # 源映射、编码、误差与统计报告
+├── conversion-report.json   # 源映射、编码、误差与统计报告
+└── preview/                 # 可选，仅 --preview 生成
+    ├── tileset.json         # 浅层轻量入口
+    ├── content/*.glb        # QEM 简化、Meshopt、无 NORMAL
+    ├── textures/*.ktx2      # 图集化高质量 UASTC，完整 mip 链
+    └── preview-report.json  # 三角面、图集页、字节、耗时与警告
 ```
 
 在兼容客户端中加载 `tileset.json`。Meshopt 产物要求支持 `EXT_meshopt_compression`；Draco 与 KTX2 变体需要相应解码器。内嵌查看器支持这三种产物。
+
+App 为成功任务提供两个入口：**保真预览**（`tileset.json`，Cesium）和**轻量预览**（`preview/tileset.json`，Three.js + `MeshoptDecoder`/`KTX2Loader`，关闭拾取、默认原分辨率纹理）。轻量入口不会请求保真 tileset。
 
 ## 预览操作
 
@@ -117,7 +124,7 @@ new-tiles/
 | **Esc** | 关闭内嵌预览 |
 | 流畅 / 均衡 / 精细 | 调整流式加载细节与屏幕空间误差 |
 
-有损功能不会被描述成无损。UASTC 主要改善 GPU 驻留与解码，但文件通常明显大于 JPEG。远景父层烘焙同样有损；报告中的采样偏移不代表全表面误差上界。
+有损功能不会被描述成无损。UASTC 主要改善 GPU 驻留与解码，但文件通常明显大于 JPEG。远景父层烘焙同样有损；报告中的采样偏移不代表全表面误差上界。轻量预览只在几何上有损：纹理保持清晰（UASTC），位置与 UV 保持 FLOAT，因材质固定 unlit 而删除 `NORMAL`。主报告的 `sourceExact` 只描述保真产物，预览摘要单独记录。
 
 ## 常用转换参数
 
@@ -127,6 +134,7 @@ new-tiles/
 | `--geometry raw\|meshopt\|draco` | `meshopt` | 原始对照、无量化 Meshopt 或量化 Draco |
 | `--texture-format original\|uastc\|etc1s` | `original` | 原始编码图片或 KTX2 GPU 纹理 |
 | `--rebuild-top` | 关闭 | 新增简化远景祖先层，原始子树完整保留 |
+| `--preview` | 关闭 | 额外生成独立轻量预览 `preview/`，主产物不变 |
 | `--memory-budget MiB` | `0` | 控制后续根块提交，不是单文件峰值硬上限 |
 | `--srs` / `--origin` | 读取元数据 | 空间参考与源坐标原点 |
 | `--checkpoint-dir` / `--pause-file` / `--resume` | 关闭 | 文件边界暂停与身份校验续转 |

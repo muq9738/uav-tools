@@ -27,7 +27,7 @@ def file_hashes(directory):
 
 cap = json.loads(subprocess.check_output([native, "--capabilities"], text=True, timeout=10))
 assert cap["protocolVersion"] == 1 and cap["pauseResume"] is True
-assert cap["defaults"] == {"threads": 2, "geometry": "meshopt", "memoryBudgetMiB": 0, "texturePixels": False, "rebuildTop": False, "topSealDistance": 2.0, "textureFormat": "original", "dracoSpeed": 5}
+assert cap["defaults"] == {"threads": 2, "geometry": "meshopt", "memoryBudgetMiB": 0, "texturePixels": False, "rebuildTop": False, "preview": False, "topSealDistance": 2.0, "textureFormat": "original", "dracoSpeed": 5}
 baseline = call(root / "baseline")
 assert baseline.returncode == 0, baseline.stderr
 assert events(baseline)[-1]["report"]["status"] == "complete"

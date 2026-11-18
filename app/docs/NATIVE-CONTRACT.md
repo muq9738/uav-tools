@@ -12,7 +12,7 @@
 
 App 拒绝不支持协议 1、真实事件或合作取消的转换器，也检查默认编码与线程。`pauseResume` 为可选能力；缺失或为 false 时保留普通转换，但不展示或接受暂停/继续操作。能力查询在分发模式下会加载必需随包插件；运行时动态库缺失由系统加载器报错。它仍不代替真实模型转换。
 
-能力还包括 `rebuildTop=true`、`topSealDistance=true`、`geometryFormats=[raw,meshopt,draco]`、`textureFormats=[original,uastc,etc1s]`、`dracoSpeeds=[0,5,10]` 和公开编码库版本；defaults 另含 `rebuildTop=false, topSealDistance=2, textureFormat=original, dracoSpeed=5`。App 对所选功能检查随包 native 能力，并核对最终报告的实际编码、速度与 Top 状态；UI 禁用随包 native 未声明的选项。旧默认路径的协议版本保持 1。
+能力还包括 `rebuildTop=true`、`topSealDistance=true`、`preview=true`、`previewAlgorithm=mesh-preview-v1`、`geometryFormats=[raw,meshopt,draco]`、`textureFormats=[original,uastc,etc1s]`、`dracoSpeeds=[0,5,10]` 和公开编码库版本；defaults 另含 `preview=false, rebuildTop=false, topSealDistance=2, textureFormat=original, dracoSpeed=5`，`previewDefaults` 给出预览三角形预算、图集页上限、编码与画质档。App 对所选功能检查随包 native 能力，并核对最终报告的实际编码、速度、Top 与预览状态；UI 禁用随包 native 未声明的选项。旧默认路径的协议版本保持 1。
 
 ## CLI 与任务参数
 
@@ -32,6 +32,7 @@ osgb-tiles INPUT OUTPUT --threads 2 --geometry meshopt --memory-budget 0 \
 | `dracoSpeed` | `--draco-speed` | 5；支持 0/5/10，分别高/中/低压缩 |
 | `textureFormat` | `--texture-format` | original；支持 uastc / etc1s（有损 KTX2） |
 | `rebuildTop` | `--rebuild-top` | false；新增有损远景祖先，保留源子树 |
+| `preview` | `--preview` | false；生成独立轻量预览 `preview/`，不改变主产物 |
 | `TopSealDistance` | `--top-seal-distance` | 0..2 米，默认 2；重建前焊接相邻开口边界，0 关闭 |
 | `memoryBudgetMiB` | `--memory-budget` | 0，不限；限制根块提交，不是峰值硬限 |
 | `srs` / `origin` | `--srs` / `--origin` | 未填写时由 native 读取元数据 |
@@ -51,7 +52,7 @@ stdout 仅输出 JSON Lines，stderr 为人读日志。CLI 不带事件参数时
 
 转换中的总量未知时用 0，界面显示已处理数；总量指完成的文件转换工作项，可能含同源文件的不同变换实例，不以 GLB 数估算。事件在线程之间串行发出；成功发布前后分别 finalize/done。示例 report 已省略其他字段，实际报告含完整统计。
 
-最终退出 0、报告 complete、编码/请求线程/预算与任务一致，并已发布 `tileset.json`，App 才标记成功。无报告不能仅凭退出码视作成功。该状态不代表画质与性能验收通过。
+最终退出 0、报告 complete、编码/请求线程/预算与任务一致，并已发布 `tileset.json`，App 才标记成功。无报告不能仅凭退出码视作成功。请求 `preview=true` 时还要求报告 `preview.status=complete`、入口 `preview/tileset.json`、算法 `mesh-preview-v1`、几何 `EXT_meshopt_compression`、纹理 `uastc`，并检查 `preview/tileset.json` 与 `preview/preview-report.json` 存在且可解析。该状态不代表画质与性能验收通过。
 
 ## 取消与事务
 

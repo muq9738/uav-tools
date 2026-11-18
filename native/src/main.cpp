@@ -24,7 +24,7 @@ int runMain(int argc,char** argv) {
             nt::configureRuntime(argv[0]);std::cout<<nt::capabilities().dump()<<'\n';return 0;
         }
         if(argc<3) {
-            std::cout<<"用法: osgb-tiles INPUT OUTPUT [--threads N] [--memory-budget MIB] [--srs ENU:纬度,经度,高度] [--origin x,y,z] [--geometry raw|meshopt|draco] [--draco-speed 0|5|10] [--texture-format original|uastc|etc1s] [--texture-pixels] [--rebuild-top] [--top-seal-distance METERS] [--json-events] [--cancel-file PATH] [--checkpoint-dir PATH] [--pause-file PATH] [--resume]\n"
+            std::cout<<"用法: osgb-tiles INPUT OUTPUT [--threads N] [--memory-budget MIB] [--srs ENU:纬度,经度,高度] [--origin x,y,z] [--geometry raw|meshopt|draco] [--draco-speed 0|5|10] [--texture-format original|uastc|etc1s] [--texture-pixels] [--rebuild-top] [--top-seal-distance METERS] [--preview] [--json-events] [--cancel-file PATH] [--checkpoint-dir PATH] [--pause-file PATH] [--resume]\n"
                      <<"默认: threads=2, geometry=meshopt, memory-budget=0；--capabilities 输出机器可读契约。\n";
             return argc==2 && std::string(argv[1])=="--help"?0:2;
         }
@@ -33,6 +33,7 @@ int runMain(int argc,char** argv) {
             std::string arg=argv[i];
             if(arg=="--texture-pixels") {options.preserveEncoded=false;continue;}
             if(arg=="--rebuild-top") {options.rebuildTop=true;continue;}
+            if(arg=="--preview") {options.preview=true;continue;}
             if(arg=="--split-paged-lod") {options.splitPagedLod=true;continue;}
             if(arg=="--quantize-u16") {options.quantizeGeometry=true;continue;}
             if(arg=="--json-events") {events=true;continue;}

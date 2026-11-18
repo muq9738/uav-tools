@@ -44,7 +44,7 @@ Json inspectBasis(const Bytes& bytes,bool decode) {
         {"gpuEstimate",gpu},
         {"decodedAlphaMin",alphaMin},{"decodedAlphaMax",alphaMax},{"levels",levels}};
 }
-BasisImage encodeBasisImage(const osg::Image& image,const std::string& format) {
+BasisImage encodeBasis(const osg::Image& image,const std::string& format,bool previewQuality) {
     if(format!="uastc" && format!="etc1s") throw std::runtime_error("Unknown Basis texture format");
     initialize();encodeImage(image); // same explicit input type/mip rejection as source writer
     basisu::image source(image.s(),image.t());
@@ -60,8 +60,9 @@ BasisImage encodeBasisImage(const osg::Image& image,const std::string& format) {
     p.m_source_images.push_back(resized);p.m_read_source_images=false;p.m_write_output_basis_files=false;
     p.m_status_output=false;p.m_compute_stats=false;p.m_print_stats=false;p.m_multithreading=false;
     p.m_create_ktx2_file=true;p.m_ktx2_srgb_transfer_func=true;p.m_perceptual=true;p.m_mip_srgb=true;p.m_mip_gen=true;
-    p.m_uastc=format=="uastc";p.m_pack_uastc_flags=1;p.m_rdo_uastc=false;
-    p.m_ktx2_uastc_supercompression=basist::KTX2_SS_ZSTANDARD;p.m_compression_level=2;p.m_quality_level=128;
+    p.m_uastc=format=="uastc";p.m_pack_uastc_flags=previewQuality?basisu::cPackUASTCLevelVerySlow:1;p.m_rdo_uastc=false;
+    p.m_ktx2_uastc_supercompression=basist::KTX2_SS_ZSTANDARD;p.m_compression_level=previewQuality?6:2;p.m_quality_level=previewQuality?255:128;
+    if(previewQuality) p.m_mip_filter="kaiser";
     basisu::basis_compressor encoder;if(!encoder.init(p) || encoder.process()!=basisu::basis_compressor::cECSuccess) throw std::runtime_error("Basis encoder failed");
     auto encoded=new EncodedImage;auto& result=encoder.get_output_ktx2_file();encoded->bytes.assign(result.begin(),result.end());encoded->mime="image/ktx2";encoded->flipV=false;
     auto audit=inspectBasis(encoded->bytes);audit["sourceWidth"]=image.s();audit["sourceHeight"]=image.t();audit["lossy"]=true;
@@ -72,7 +73,10 @@ BasisImage encodeBasisImage(const osg::Image& image,const std::string& format) {
         int delta=int(pixels[(y*w+x)*4+k])-int(resized(x,y)[k]);maximum=std::max(maximum,unsigned(std::abs(delta)));squared+=double(delta)*delta;
     }
     audit["maxChannelErrorAgainstResizedInput"]=maximum;audit["rmseAgainstResizedInput"]=std::sqrt(squared/(w*h*4));
-    audit["resizeFilter"]="lanczos3";audit["uastcRdo"]=false;audit["speedLevel"]=format=="etc1s"?2:1;
+    audit["resizeFilter"]="lanczos3";audit["uastcRdo"]=false;audit["speedLevel"]=format=="etc1s"?2:(previewQuality?4:1);
+    audit["qualityProfile"]=previewQuality?"preview-uastc-very-slow":"conversion-fast";
     return {encoded,audit};
 }
+BasisImage encodeBasisImage(const osg::Image& image,const std::string& format) {return encodeBasis(image,format,false);}
+BasisImage encodePreviewBasisImage(const osg::Image& image) {return encodeBasis(image,"uastc",true);}
 }

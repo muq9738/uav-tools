@@ -80,6 +80,10 @@ struct Options {
     std::string textureFormat="original";
     // 实验：使用 KHR_mesh_quantization；非默认路径，误差单独报告。
     bool quantizeGeometry=false;
+    // 独立轻量预览；不改变主产物的编码、误差与 sourceExact 语义。
+    bool preview=false;
+    // 仅供 preview.cpp 的 GLB 写出副本设置；主产物即使开启 preview 也不读取它。
+    bool previewEncoding=false;
     // 新增有损远景祖先层；原始源内容全部保留。
     bool rebuildTop=false;
     // Boundary weld tolerance for rebuilt ancestors, in metres. 0 disables

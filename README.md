@@ -98,10 +98,17 @@ new-tiles/
 ├── content/*.glb            # Geometry and material payloads
 ├── textures/*               # Original images or KTX2 output
 ├── tiles/*.json             # Per-source diagnostic manifests
-└── conversion-report.json   # Source mapping, encoding, errors, and statistics
+├── conversion-report.json   # Source mapping, encoding, errors, and statistics
+└── preview/                 # Optional: --preview only
+    ├── tileset.json         # Shallow lightweight entry
+    ├── content/*.glb        # QEM-simplified Meshopt geometry, no normals
+    ├── textures/*.ktx2      # Atlased high-quality UASTC, full mip chain
+    └── preview-report.json  # Triangles, atlas pages, sizes, timings, warnings
 ```
 
 Load `tileset.json` in a compatible 3D Tiles client. Meshopt output requires `EXT_meshopt_compression` support; Draco and KTX2 variants require their corresponding decoders. The bundled viewer supports all three.
+
+The App offers two entries for a job: **faithful** (`tileset.json`, Cesium) and **lightweight** (`preview/tileset.json`, Three.js with `MeshoptDecoder`/`KTX2Loader`, picking disabled, full-resolution textures). The preview entry never requests the faithful tileset.
 
 ## Viewer controls
 
@@ -125,13 +132,14 @@ Load `tileset.json` in a compatible 3D Tiles client. Meshopt output requires `EX
 | `--geometry raw\|meshopt\|draco` | `meshopt` | Raw comparison mode, quantization-free Meshopt, or quantized Draco |
 | `--texture-format original\|uastc\|etc1s` | `original` | Original encoded images or KTX2 GPU textures |
 | `--rebuild-top` | Off | Adds simplified distant ancestors while preserving original subtrees |
+| `--preview` | Off | Also writes an independent lightweight `preview/` entry; the faithful output is unchanged |
 | `--memory-budget MiB` | `0` | Gates submission of later root blocks; not a hard per-file peak limit |
 | `--srs` / `--origin` | From metadata | Spatial reference and source-coordinate origin |
 | `--checkpoint-dir` / `--pause-file` / `--resume` | Off | File-boundary pause and verified resume |
 | `--json-events` / `--cancel-file` | Off | Structured progress and cooperative cancellation |
 | `--capabilities` | — | Prints the machine-readable native capability contract |
 
-Lossy features are never presented as lossless. UASTC improves GPU residency and decoding behavior but usually produces much larger files than JPEG. Rebuilt-parent texture baking is also lossy; its sampling offset is reported and is not an upper bound for whole-surface error.
+Lossy features are never presented as lossless. UASTC improves GPU residency and decoding behavior but usually produces much larger files than JPEG. Rebuilt-parent texture baking is also lossy; its sampling offset is reported and is not an upper bound for whole-surface error. The lightweight preview is intentionally lossy in geometry only: textures stay clear (UASTC), positions/UVs stay FLOAT, and `NORMAL` is removed because the material is unlit. The main report keeps `sourceExact` for the faithful product and adds a separate `preview` summary.
 
 ## Project layout
 

@@ -296,6 +296,47 @@ func TestStateSurvivesRestartAndInterruptedJobsFail(t *testing.T) {
 	}
 }
 
+func TestPreviewSpecSurvivesNormalizationAndJobsJSON(t *testing.T) {
+	dataDir := t.TempDir()
+	input := newInput(t)
+	manager, err := New(Config{DataDir: dataDir, Runner: &fakeRunner{}, Now: time.Now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	submitted, err := manager.Submit(Spec{Input: input, Output: filepath.Join(t.TempDir(), "out"), Preview: true})
+	if err != nil {
+		manager.Close()
+		t.Fatal(err)
+	}
+	if !submitted.Spec.Preview {
+		t.Fatal("规范化丢失了 preview 参数")
+	}
+	done := waitFor(t, manager, submitted.ID, StateSucceeded)
+	if !done.Spec.Preview {
+		t.Fatal("完成状态丢失了 preview 参数")
+	}
+	raw, err := os.ReadFile(filepath.Join(dataDir, "jobs.json"))
+	if err != nil {
+		manager.Close()
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"preview": true`) {
+		manager.Close()
+		t.Fatalf("jobs.json 未持久化 preview：%s", raw)
+	}
+	manager.Close()
+
+	restored, err := New(Config{DataDir: dataDir, Runner: &fakeRunner{}, Now: time.Now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Close()
+	saved, err := restored.Get(submitted.ID)
+	if err != nil || !saved.Spec.Preview {
+		t.Fatalf("重启后 preview 参数未恢复：%+v %v", saved, err)
+	}
+}
+
 func TestSubscribeReceivesStateAndLogs(t *testing.T) {
 	input := newInput(t)
 	beforeEvents := make(chan struct{})

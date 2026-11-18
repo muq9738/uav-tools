@@ -73,6 +73,7 @@ struct Writer {
     bool preserve;
     bool compressGeometry=false;
     bool quantizeGeometry=false;
+    bool preview=false;
     std::string textureFormat="original";
     std::size_t virtualBufferLength=0;
     const SpatialReference* spatial=nullptr;
@@ -88,9 +89,9 @@ struct Writer {
         while(binary.size()%4) binary.push_back(0);
         int index=doc["bufferViews"].size();bool isIndex=target==34963;
         Bytes encoded;
-        if(compressGeometry && length>=512) encoded=encodeMeshopt(data,length,stride,isIndex,triangles);
-        // 小视图保留原始表示；收益需覆盖扩展 JSON，避免编码反而增加整包开销。
-        bool compressed=!encoded.empty() && encoded.size()+(result.compressedViews?192:512)<length;
+        if(compressGeometry && (length>=512 || preview)) encoded=encodeMeshopt(data,length,stride,isIndex,triangles);
+        // 主产物小视图保留原始表示；预览契约固定 Meshopt，即使小夹具也实际编码。
+        bool compressed=!encoded.empty() && (preview || encoded.size()+(result.compressedViews?192:512)<length);
         // 解码后的虚拟范围也必须互不重叠；Cesium 索引缓存使用该偏移和 accessor 形状作为键。
         auto virtualOffset=(virtualBufferLength+3)&~std::size_t(3);
         Json view={{"buffer",compressed?1:0},{"byteOffset",compressed?virtualOffset:binary.size()},{"byteLength",length}};
@@ -164,7 +165,7 @@ struct Writer {
             throw std::runtime_error("已编码纹理容器不是 PNG/JPEG，尚未建立等价输出，拒绝静默转码: "+image->getFileName());
         osg::ref_ptr<EncodedImage> encoded=preserve?captured:nullptr;
         bool original=encoded.valid();Json basisAudit;
-        if(textureFormat!="original") {auto basis=encodeBasisImage(*image,textureFormat);encoded=basis.encoded;basisAudit=basis.audit;original=false;}
+        if(textureFormat!="original") {auto basis=preview?encodePreviewBasisImage(*image):encodeBasisImage(*image,textureFormat);encoded=basis.encoded;basisAudit=basis.audit;original=false;}
         if(!encoded) encoded=encodeImage(*image);
         std::string name=contentKey(encoded->bytes)+(encoded->mime=="image/ktx2"?".ktx2":encoded->mime=="image/jpeg"?".jpg":".png");
         {
@@ -418,7 +419,8 @@ struct Writer {
 }
 ContentResult writeGlb(const std::vector<GeometryInput>& meshes,const fs::path& output,const fs::path& textures,bool preserve,const SpatialReference* spatial,bool compressGeometry,bool quantizeGeometry,const Options* codecOptions) {
     Writer writer;writer.textureDir=textures;writer.preserve=preserve;writer.spatial=spatial;writer.compressGeometry=compressGeometry && !(codecOptions && codecOptions->dracoGeometry);writer.quantizeGeometry=quantizeGeometry;
-    if(codecOptions) writer.textureFormat=codecOptions->textureFormat;
+    if(codecOptions) {writer.textureFormat=codecOptions->textureFormat;writer.preview=codecOptions->previewEncoding;}
+    if(writer.preview) writer.requireExtension("KHR_materials_unlit");
     for(const auto& mesh:meshes) writer.geometry(mesh);
     if(writer.doc["meshes"].empty()) throw std::runtime_error("拒绝输出空 GLB");
     if(codecOptions && codecOptions->dracoGeometry) {

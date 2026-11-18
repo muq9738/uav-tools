@@ -29,7 +29,7 @@ void check(const Options& options) {
     // The conversion layer translates its cancellation callback into pause.
 
 }
-struct Vertex {V p;Color color;std::set<unsigned> faces;unsigned version=0;bool alive=true;};
+struct Vertex {V p;Color color;std::set<unsigned> faces;unsigned version=0;bool alive=true;UV uv;};
 struct Face {std::array<unsigned,3> v;unsigned material=0;bool alive=true;};
 struct Material {osg::ref_ptr<osg::StateSet> state;osg::ref_ptr<osg::Image> image;osg::ref_ptr<osg::Texture> texture;};
 struct SourceFace {std::array<V,3> p;std::array<UV,3> uv;unsigned material=0;};
@@ -60,9 +60,9 @@ UV uvAt(osg::Array* a,unsigned v,unsigned p) {
     if(auto b=dynamic_cast<osg::Vec2dArray*>(a)) return b->at(i);
     throw std::runtime_error("Top: unsupported UV array");
 }
-Mesh collect(const std::vector<GeometryInput>& inputs,const SpatialReference* spatial) {
+Mesh collect(const std::vector<GeometryInput>& inputs,const SpatialReference* spatial,bool preserveUV=false) {
     Mesh m;
-    using Key=std::tuple<unsigned,double,double,double,double,double,double,double>;
+    using Key=std::tuple<unsigned,double,double,double,double,double,double,double,double,double>;
     std::map<Key,unsigned> welded;std::set<std::array<unsigned,3>> unique;
     for(const auto& input:inputs) {
         auto g=input.geometry.get();auto a=g->getVertexArray();m.hasColors|=g->getColorArray()!=nullptr;
@@ -105,12 +105,13 @@ Mesh collect(const std::vector<GeometryInput>& inputs,const SpatialReference* sp
                         unsigned index=triangles[j+k];if(index>=a->getNumElements()) throw std::runtime_error("Top: index out of range");
                         V p=position(a,index)*input.matrix;if(spatial) p=spatial->toLocal(p);
                         Color c=colorAt(g->getColorArray(),index,pi);
-                        Key key={mat,p.x(),p.y(),p.z(),c.r(),c.g(),c.b(),c.a()};
-                        auto [it,inserted]=welded.emplace(key,m.v.size());if(inserted) m.v.push_back({p,c,{}});
-                        f.v[k]=it->second;original.p[k]=p;original.uv[k]=uvAt(g->getTexCoordArray(0),index,pi);
+                        original.p[k]=p;original.uv[k]=uvAt(g->getTexCoordArray(0),index,pi);
                         if(input.state) if(auto tm=dynamic_cast<osg::TexMat*>(input.state->getTextureAttribute(0,osg::StateAttribute::TEXMAT))) {
                             auto uv=V(original.uv[k].x(),original.uv[k].y(),0)*tm->getMatrix();original.uv[k]={uv.x(),uv.y()};
                         }
+                        Key key={mat,p.x(),p.y(),p.z(),c.r(),c.g(),c.b(),c.a(),preserveUV?original.uv[k].x():0.,preserveUV?original.uv[k].y():0.};
+                        auto [it,inserted]=welded.emplace(key,m.v.size());if(inserted) {m.v.push_back({p,c,{}});m.v.back().uv=original.uv[k];}
+                        f.v[k]=it->second;
                     }
                     if(f.v[0]==f.v[1] || f.v[1]==f.v[2] || f.v[2]==f.v[0]) continue;
                     auto sorted=f.v;std::sort(sorted.begin(),sorted.end());if(!unique.insert(sorted).second) continue;
@@ -135,8 +136,14 @@ unsigned shared(const Mesh& m,unsigned a,unsigned b) {unsigned n=0;for(auto f:m.
 std::set<unsigned> neighbors(const Mesh& m,unsigned a) {std::set<unsigned> n;for(auto f:m.v[a].faces) if(m.f[f].alive) for(auto v:m.f[f].v) if(v!=a) n.insert(v);return n;}
 bool boundary(const Mesh& m,unsigned v) {for(auto n:neighbors(m,v)) if(shared(m,v,n)==1) return true;return false;}
 struct Candidate {double cost;unsigned a,b,va,vb;V p;bool operator<(const Candidate& x) const {return std::tie(cost,a,b)>std::tie(x.cost,x.a,x.b);}};
+double interpolation(const Vertex& a,const Vertex& b,const V& p) {
+    double d=(b.p-a.p).length();return d>1e-12?std::clamp((p-a.p).length()/d,0.,1.):0.;
+}
 Color interpolated(const Vertex& a,const Vertex& b,const V& p) {
-    double d=(b.p-a.p).length();double t=d>1e-12?std::clamp((p-a.p).length()/d,0.,1.):0.;return a.color*(1-t)+b.color*t;
+    double t=interpolation(a,b,p);return a.color*(1-t)+b.color*t;
+}
+UV interpolatedUv(const Vertex& a,const Vertex& b,const V& p) {
+    double t=interpolation(a,b,p);return a.uv*(1-t)+b.uv*t;
 }
 Candidate candidate(const Mesh& m,const std::vector<Quadric>& quadrics,unsigned a,unsigned b) {
     Quadric q=quadrics[a];q+=quadrics[b];auto& x=m.v[a];auto& y=m.v[b];
@@ -165,6 +172,9 @@ Candidate candidate(const Mesh& m,const std::vector<Quadric>& quadrics,unsigned 
             if(shared(m,a,b)==1 && x.faces.size()==1 && y.faces.size()==1) value=normal(m,m.f[*x.faces.begin()]).length()*.5*.01;
         }
         auto c=interpolated(x,y,p);for(unsigned k=0;k<4;++k) value+=std::abs(x.color[k]-y.color[k])*101.+std::abs(c[k]-x.color[k])+std::abs(c[k]-y.color[k]);
+        // UV 接缝在 collect(preserveUV) 中已拆成拓扑边界；此处再惩罚跨 UV 的坍缩，
+        // 避免清纹理预览为了少量三角形把角点坐标拉到另一张图或另一重复周期。
+        auto uv=interpolatedUv(x,y,p);value+=(x.uv-y.uv).length()*100.+(uv-x.uv).length()+(uv-y.uv).length();
         if(std::isfinite(value) && value<best.cost) {best.cost=value;best.p=p;}
     }
     return best;
@@ -398,7 +408,7 @@ Json simplify(Mesh& m,std::size_t target,const Options& options) {
         auto affected=a.faces;affected.insert(b.faces.begin(),b.faces.end());
         auto around=neighbors(m,c.a);auto bn=neighbors(m,c.b);around.insert(bn.begin(),bn.end());
         displacement=std::max({displacement,(c.p-a.p).length(),(c.p-b.p).length()});
-        a.color=interpolated(a,b,c.p);a.p=c.p;q[c.a]+=q[c.b];b.alive=false;
+        a.color=interpolated(a,b,c.p);a.uv=interpolatedUv(a,b,c.p);a.p=c.p;q[c.a]+=q[c.b];b.alive=false;
         for(auto i:affected) {
             auto& f=m.f[i];for(auto v:f.v) m.v[v].faces.erase(i);
             for(auto& v:f.v) if(v==c.b) v=c.a;
@@ -914,5 +924,27 @@ TopResult rebuildTop(std::vector<TopSource> sources,const Options& options,const
     if(sources.empty()) throw std::runtime_error("Top: no resident source roots");
     Builder builder(options,spatial);std::vector<Item> items;for(auto& source:sources) items.push_back(builder.source(std::move(source)));
     auto root=builder.build(std::move(items));TopResult result;result.children.push_back(root.tile);result.error=root.error;result.audit=std::move(builder.audit);return result;
+}
+PreviewMesh simplifyPreview(const std::vector<GeometryInput>& inputs,std::size_t target,
+                            const Options& options,const SpatialReference* spatial) {
+    auto mesh=collect(inputs,spatial,true);
+    PreviewMesh result;result.inputTriangles=mesh.inputTriangles;result.hasColors=mesh.hasColors;
+    result.simplification=mesh.f.size()>target?simplify(mesh,target,options):Json({
+        {"inputTriangles",mesh.f.size()},{"targetTriangles",target},{"outputTriangles",mesh.f.size()},
+        {"collapses",0},{"rejectedEdges",0},{"maxCollapseDisplacementMeters",0.},{"budgetReached",true},
+        {"boundaryPolicy","material/UV partitions; source already within budget"}});
+    for(const auto& material:mesh.materials) result.materials.push_back({material.state,material.image,material.texture});
+    result.faces.reserve(mesh.f.size());
+    for(const auto& face:mesh.f) if(face.alive) {
+        PreviewFace output;output.material=face.material;
+        for(unsigned k=0;k<3;++k) {
+            const auto& vertex=mesh.v[face.v[k]];
+            output.positions[k]=vertex.p;output.uv[k]=vertex.uv;output.colors[k]=vertex.color;
+        }
+        result.faces.push_back(output);
+    }
+    result.simplification["outputTriangles"]=result.faces.size();
+    result.simplification["uniqueInputTriangles"]=mesh.f.size();
+    return result;
 }
 }

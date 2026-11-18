@@ -1,0 +1,4 @@
+{
+  "three": { "version": "0.187.0", "source": "npm package three@0.187.0" },
+  "3d-tiles-renderer": { "version": "0.5.4", "source": "npm package 3d-tiles-renderer@0.5.4" }
+}

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>轻量预览 · 景构</title>
+<link rel="stylesheet" href="/viewer.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "/vendor/three/build/three.module.js",
+    "three/addons/": "/vendor/three/examples/jsm/",
+    "3d-tiles-renderer": "/vendor/3d-tiles-renderer/index.js"
+  }
+}
+</script>
+</head>
+<body>
+<header class="viewer-bar">
+  <button id="close" class="back" type="button" title="返回任务（Esc）"><span aria-hidden="true">←</span><span>返回任务</span></button>
+  <span class="bar-divider" aria-hidden="true"></span>
+  <div class="model-name"><strong>轻量预览 · Three.js</strong><span id="job-name">正在读取任务</span></div>
+  <nav class="view-switch" aria-label="相机视角">
+    <button type="button" data-view="orbit" class="active" aria-pressed="true" disabled>透视</button>
+    <button type="button" data-view="top" aria-pressed="false" disabled>俯视</button>
+    <button type="button" data-view="front" aria-pressed="false" disabled>正视</button>
+  </nav>
+  <div class="viewer-actions">
+    <button id="fit" class="icon-button" type="button" disabled title="适应模型（H）" aria-label="适应模型">适应</button>
+    <button id="fullscreen" class="icon-button" type="button" title="全屏（F）" aria-label="全屏">全屏</button>
+  </div>
+</header>
+<main id="viewport">
+  <div id="three" aria-label="可连续旋转、平移和缩放的轻量三维模型"></div>
+  <div id="loading" class="loading" role="status" aria-live="polite">
+    <div class="loading-card"><span class="spinner" aria-hidden="true"></span><strong>正在准备轻量模型</strong><span id="loading-detail">读取 preview/tileset.json</span><span class="loading-track" aria-hidden="true"><i id="loading-progress"></i></span></div>
+  </div>
+  <div id="error" class="viewer-error" role="alert" hidden><strong>暂时无法显示轻量模型</strong><p id="error-message"></p><button id="retry" type="button">重新加载</button></div>
+  <div id="notice" class="view-notice" role="status" hidden></div>
+  <div id="orbit-reticle" class="orbit-reticle" aria-hidden="true" hidden><i></i></div>
+  <div id="stats" class="stats" aria-live="polite"><span class="load-state"><i class="status-dot"></i><b id="load-state">初始化</b></span><span>Draw call <b id="draw-calls">0</b></span><span>三角面 <b id="triangles">0</b></span></div>
+  <div class="navigation-hint"><span><kbd>左键</kbd> 旋转</span><i></i><span><kbd>右键</kbd> 平移</span><i></i><span><kbd>滚轮</kbd> 缩放</span><i></i><span><kbd>H</kbd> 复位</span></div>
+</main>
+<script type="module" src="/preview.js"></script>
+</body>
+</html>

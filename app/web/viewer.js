@@ -6,6 +6,7 @@ const C = Cesium;
 const parameters = new URLSearchParams(location.search);
 const jobId = parameters.get('job') || '';
 const token = parameters.get('token') || '';
+const lightweight = parameters.get('mode') === 'light';
 const $ = selector => document.querySelector(selector);
 
 let viewer;
@@ -21,7 +22,7 @@ let noticeTimer;
 let anisotropy = 1;
 const loadStarted = performance.now();
 const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
-const tilesetURL = `/api/jobs/${encodeURIComponent(jobId)}/tiles/tileset.json`;
+const tilesetURL = `/api/jobs/${encodeURIComponent(jobId)}/tiles/${lightweight ? 'preview/' : ''}tileset.json`;
 
 function formatCount(value) {
   const number = value || 0;
@@ -111,6 +112,7 @@ function updateStatistics() {
     if (!ready) {
       ready = true;
       loadedMilliseconds = Math.round(performance.now() - loadStarted);
+      if (lightweight) viewer.scene.requestRenderMode = true;
       $('#loading-progress').style.width = '100%';
       $('#loading').hidden = true;
       $('#stats').classList.add('ready');
@@ -165,7 +167,7 @@ function tilesetOptions(maximumScreenSpaceError) {
     cullRequestsWhileMoving: false,
     preloadFlightDestinations: true,
     preloadWhenHidden: false,
-    enablePick: true,
+    enablePick: !lightweight,
     enableShowOutline: false,
     enableDebugWireframe: false,
     backFaceCulling: false,
@@ -192,6 +194,9 @@ window.__OSGB_PREVIEW__ = {
       processing: stats?.numberOfTilesProcessing || 0,
       contentReady: stats?.numberOfTilesWithContentReady || 0,
       maximumScreenSpaceError: tileset?.maximumScreenSpaceError || null,
+      mode: lightweight ? 'light' : 'faithful',
+      enablePick: lightweight ? false : true,
+      resolutionScale: viewer?.resolutionScale || 1,
       activeView,
       anisotropy,
       msaaSamples: viewer?.scene.msaaSamples || 1,
@@ -235,6 +240,14 @@ async function start() {
         webgl: { alpha: false, antialias: true, depth: true, powerPreference: 'high-performance' },
       },
     });
+    viewer.resolutionScale = 1;
+    if (lightweight) {
+      $('.model-name strong').textContent = '轻量预览 · Cesium';
+      $('.quality').hidden = true;
+      // 首帧就绪前必须连续渲染，才能完成根节点遍历、GLB/KTX2 解码与首次相机飞行；
+      // 就绪后由 updateStatistics 恢复 requestRenderMode 的按需渲染。
+      viewer.scene.requestRenderMode = false;
+    }
     const scene = viewer.scene;
     scene.globe.show = false;
     scene.globe.showGroundAtmosphere = false;
@@ -268,6 +281,7 @@ async function start() {
       retryAttempts: 3,
     });
     tileset = await C.Cesium3DTileset.fromUrl(resource, tilesetOptions(Number($('#quality').value)));
+    if (lightweight) window.__lightTileset = tileset;
     scene.primitives.add(tileset);
     modelCamera = installModelCamera(viewer, tileset, {
       onActivity(activity) {
@@ -278,6 +292,10 @@ async function start() {
     tileset.initialTilesLoaded.addEventListener(() => modelCamera?.refreshCenter());
     tileset.tileFailed.addEventListener(() => showNotice('部分瓦片暂时无法加载，已跳过；可缩放后重试'));
     tileset.loadProgress.addEventListener(updateStatistics);
+    if (lightweight) {
+      // 等首个实际渲染帧，确保根节点包围体已参与相机定位，再执行首次飞行。
+      await new Promise(resolve => scene.postRender.addEventListener(function once() { scene.postRender.removeEventListener(once); resolve(); }));
+    }
     await modelCamera.flyTo('orbit');
     scene.requestRender();
   } catch (error) {

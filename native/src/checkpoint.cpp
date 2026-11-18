@@ -85,7 +85,7 @@ fs::path assetPath(const fs::path& work,const std::string& name) {
     auto path=fs::u8path(name);
     if(path.is_absolute() || path.lexically_normal()!=path || path.empty() || *path.begin()=="..") throw std::runtime_error("非法检查点资产路径: "+name);
     auto first=path.begin()->string();
-    if(first!="content" && first!="textures" && first!="tiles") throw std::runtime_error("未知检查点资产: "+name);
+    if(first!="content" && first!="textures" && first!="tiles" && first!="preview") throw std::runtime_error("未知检查点资产: "+name);
     return work/path;
 }
 }

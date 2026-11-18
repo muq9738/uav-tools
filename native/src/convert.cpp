@@ -2,6 +2,7 @@
 #include "output_validation.hpp"
 #include "checkpoint.hpp"
 #include "top.hpp"
+#include "preview.hpp"
 #include <osg/Geode>
 #include <osg/LOD>
 #include <osg/MatrixTransform>
@@ -579,7 +580,7 @@ Json convert(const Options& requested) {
         Json identity={{"input",options.input.u8string()},{"output",options.output.u8string()},
             {"entrypoints",entries},{"inputs",inputs},{"converter",checkpointConverterIdentity()},
             {"effectiveOptions",{{"srs",options.srs},{"origin",origin},{"preserveEncoded",options.preserveEncoded},
-                {"compressGeometry",options.compressGeometry},{"dracoGeometry",options.dracoGeometry},{"dracoSpeed",options.dracoSpeed},{"textureFormat",options.textureFormat},{"threads",options.threads},{"quantizeGeometry",options.quantizeGeometry},{"splitPagedLod",options.splitPagedLod},{"rebuildTop",options.rebuildTop},{"topSealDistance",options.topSealDistance},{"topAlgorithm","ancestor-rebuild-v1"},{"memoryBudgetBytes",options.memoryBudgetBytes}}}};
+                {"compressGeometry",options.compressGeometry},{"dracoGeometry",options.dracoGeometry},{"dracoSpeed",options.dracoSpeed},{"textureFormat",options.textureFormat},{"threads",options.threads},{"quantizeGeometry",options.quantizeGeometry},{"splitPagedLod",options.splitPagedLod},{"rebuildTop",options.rebuildTop},{"topSealDistance",options.topSealDistance},{"topAlgorithm","ancestor-rebuild-v1"},{"preview",options.preview},{"previewAlgorithm","mesh-preview-v1"},{"previewTriangleBudget",100000},{"previewAtlasPageLimit",4096},{"memoryBudgetBytes",options.memoryBudgetBytes}}}};
         checkpoint=std::make_unique<Checkpoint>(options.checkpointDir,identity,options.resume);
         resume=std::make_unique<ResumeState>(*checkpoint,options,inputs);processed=checkpoint->filesCompleted();
         if(options.checkCancelled) options.checkCancelled();
@@ -600,6 +601,7 @@ Json convert(const Options& requested) {
     const auto initialResident=residentBytes();ResidentSampler sampler;bool throttled=false;
     Json derivedAssets=Json::object();
     const auto topStaging=options.output/".top-building";
+    const auto previewStaging=options.output/".preview-building";
     try {
     std::deque<std::future<std::pair<FileResult,Json>>> jobs;bool stopping=false;std::exception_ptr failure;
     for(std::size_t next=0;next<entrypoints.size()||!jobs.empty();) {
@@ -653,6 +655,27 @@ Json convert(const Options& requested) {
         }
     };
     relocateUris(relocateUris,root);
+    std::vector<PreviewSource> previewSources;
+    if(options.preview) {
+        std::map<std::string,std::pair<const Json*,const Json*>> sourceByContent;
+        for(const auto& row:records) for(const auto& content:row.at("content")) sourceByContent[content.at("uri").get<std::string>()]={&row,&content};
+        auto frontier=[&](auto&& self,const Json& tile)->void {
+            if(tile.contains("content")) {
+                const auto uri=tile.at("content").at("uri").get<std::string>();auto found=sourceByContent.find(uri);
+                if(found==sourceByContent.end()) throw std::runtime_error("预览显示前沿缺少源记录: "+uri);
+                const auto& row=*found->second.first;const auto& content=*found->second.second;
+                auto matrix=row.at("sourceTransform").get<std::vector<double>>();if(matrix.size()!=16) throw std::runtime_error("预览源矩阵无效");
+                auto box=tile.at("boundingVolume").at("box").get<std::vector<double>>();if(box.size()!=12) throw std::runtime_error("预览源包围盒无效");
+                osg::BoundingBoxd sourceBounds;for(int x:{-1,1}) for(int y:{-1,1}) for(int z:{-1,1}) sourceBounds.expandBy(osg::Vec3d(
+                    box[0]+x*box[3]+y*box[6]+z*box[9],box[1]+x*box[4]+y*box[7]+z*box[10],box[2]+x*box[5]+y*box[8]+z*box[11]));
+                previewSources.push_back({fs::u8path(row.at("source").get<std::string>()),osg::Matrixd(matrix.data()),sourceBounds,content.at("triangles").get<std::uint64_t>()});
+                if(resume) resume->checkSource(previewSources.back().file);
+                return; // 取有效显示前沿，不把其 LOD 后代重复合并。
+            }
+            if(tile.contains("children")) for(const auto& child:tile["children"]) self(self,child);
+        };
+        for(const auto& child:root["children"]) frontier(frontier,child);
+    }
     Json topAudit=Json::array();
     if(options.rebuildTop) {
         emit({{"type","progress"},{"stage","rebuild-top"},{"done",0},{"total",0},{"unit","ancestors"}});
@@ -702,6 +725,19 @@ Json convert(const Options& requested) {
         root["boundingVolume"]=boundingBoxJson(bounds);
         root["geometricError"]=error;
         emit({{"type","progress"},{"stage","rebuild-top"},{"done",topAudit.size()},{"total",topAudit.size()},{"unit","ancestors"}});
+    }
+    Json previewReport;
+    if(options.preview) {
+        emit({{"type","progress"},{"stage","preview"},{"done",0},{"total",previewSources.size()},{"unit","files"}});
+        auto previewOptions=options;previewOptions.output=previewStaging;previewOptions.event=emit;
+        previewOptions.checkCancelled=[&] {if(options.checkCancelled) options.checkCancelled();if(resume) resume->check();};
+        previewReport=buildPreview(previewSources,previewOptions,spatial.projected()?&spatial:nullptr,placement);
+        if(fs::exists(options.output/"preview")) throw std::runtime_error("预览暂存资产与已有目录冲突");
+        for(const auto& item:fs::recursive_directory_iterator(previewStaging)) if(item.is_regular_file()) {
+            auto relative=item.path().lexically_relative(previewStaging);derivedAssets[(fs::path("preview")/relative).generic_u8string()]=fileIdentity(item.path());
+        }
+        fs::rename(previewStaging,options.output/"preview");
+        emit({{"type","progress"},{"stage","preview"},{"done",previewSources.size()},{"total",previewSources.size()},{"unit","files"}});
     }
     std::uint64_t glbs=0,vertices=0,triangles=0,imageCount=0,originals=0;std::set<std::string> files,textureFiles,contentsSeen;
     std::uint64_t geometryOriginalFloatBytes=0;double quantizationErrorMeters=0;
@@ -762,6 +798,10 @@ Json convert(const Options& requested) {
         {"sourceContentsExact",!options.dracoGeometry && !options.quantizeGeometry && options.textureFormat=="original"},
         {"topGlbs",topAudit.size()},{"topLossy",options.rebuildTop && !topAudit.empty()},
         {"memoryThrottled",throttled},{"memoryResidentSampled",initialResident>0},{"records",records}};
+    if(options.preview) report["preview"]={
+        {"status","complete"},{"entry","preview/tileset.json"},{"algorithm","mesh-preview-v1"},
+        {"triangles",previewReport.at("triangles")},{"glbs",previewReport.at("glbs")},
+        {"geometryEncoding","EXT_meshopt_compression"},{"textureFormat","uastc"}};
     if(checkpoint) {
         report["checkpointDir"]=checkpoint->directory().u8string();report["filesCompleted"]=checkpoint->filesCompleted();
         report["filesReused"]=resume->reused.size();
@@ -782,7 +822,7 @@ Json convert(const Options& requested) {
         if(options.checkCancelled) options.checkCancelled();
         verifyCurrentInputs();
         fs::remove(options.output/"tileset.json");fs::remove(options.output/"conversion-report.json");
-        fs::remove_all(topStaging);
+        fs::remove_all(topStaging);fs::remove_all(previewStaging);fs::remove_all(options.output/"preview");
         for(auto it=derivedAssets.begin();it!=derivedAssets.end();++it) fs::remove(options.output/fs::u8path(it.key()));
         checkpoint->verifyAssets();auto completed=checkpoint->filesCompleted();
         Json report={{"status","paused"},{"checkpointDir",checkpoint->directory().u8string()},{"filesCompleted",completed},

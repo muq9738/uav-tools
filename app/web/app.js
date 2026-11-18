@@ -145,7 +145,8 @@ function renderJobs() {
     ops.className = 'ops'
     ops.append(...jobActions(job))
     if (job.state === 'succeeded') {
-      ops.append(linkButton('预览', () => openPreview(job.id), 'preview-link'))
+      ops.append(linkButton(job.spec.preview ? '保真预览' : '预览', () => openPreview(job.id), 'preview-link'))
+      if (job.spec.preview || job.report?.preview?.status === 'complete') ops.append(linkButton('轻量预览', () => openPreview(job.id, true), 'preview-link'))
     }
     if (state.config?.revealAvailable && job.state === 'succeeded') {
       ops.append(linkButton('打开目录', async () => {
@@ -244,9 +245,10 @@ async function refreshJobs() {
 
 // ---------- Cesium 预览 ----------
 
-function openPreview(id) {
+function openPreview(id, lightweight = false) {
   const dialog = $('#preview-dialog')
-  $('#preview-frame').src = withToken(`/viewer.html?job=${encodeURIComponent(id)}`)
+  const entry = lightweight ? '/preview.html' : '/viewer.html'
+  $('#preview-frame').src = withToken(`${entry}?job=${encodeURIComponent(id)}`)
   dialog.showModal()
 }
 
@@ -293,6 +295,7 @@ $('#new-job').addEventListener('submit', async event => {
     threads: Number($('#threads').value) || 2,
     geometry: $('#geometry').value,
     memoryBudgetMiB: Number($('#memoryBudgetMiB').value),
+    preview: $('#generatePreview').checked,
     rebuildTop: $('#rebuildTop').value === 'true',
     topSealDistance: Number($('#topSealDistance').value),
     textureFormat: $('#textureFormat').value,
@@ -378,7 +381,8 @@ function renderDetail(job) {
   status.append(badge, time)
   status.append(...jobActions(job))
   if (job.state === 'succeeded') {
-    status.append(linkButton('预览模型', () => openPreview(job.id)))
+    status.append(linkButton(job.spec.preview ? '保真预览' : '预览模型', () => openPreview(job.id)))
+    if (job.spec.preview || job.report?.preview?.status === 'complete') status.append(linkButton('轻量预览', () => openPreview(job.id, true)))
   }
   if (state.config?.revealAvailable && job.state === 'succeeded') {
     status.append(linkButton('打开输出目录', async () => {
@@ -440,6 +444,7 @@ function reportGrid(report) {
     ['几何编码', ({ raw: '原始数组', EXT_meshopt_compression: 'Meshopt（无量化）', KHR_draco_mesh_compression: 'Draco（有损）' })[report.geometryEncoding] || report.geometryEncoding],
     ['纹理编码', ({ original: '原图', uastc: 'KTX2-UASTC（有损）', etc1s: 'KTX2-ETC1S（有损）' })[report.textureFormat]],
     ['新增远景层', report.rebuildTop != null ? (report.topGlbs ? `${report.topGlbs} 个（有损，焊缝 ${report.topSealDistance ?? 2} 米）` : '无') : null],
+    ['轻量预览', report.preview ? `${report.preview.triangles} 三角面 · ${report.preview.glbs} GLB · Meshopt + UASTC` : null],
     ['位置量化误差', (report.geometryEncoding === 'KHR_draco_mesh_compression' || report.quantizeGeometry) && report.quantizationErrorMeters != null ? `${(report.quantizationErrorMeters * 1000).toFixed(3)} 毫米` : null],
     ['远景表面偏移（采样）', report.topAncestors?.length ? `${(Math.max(...report.topAncestors.map(top => top.bake?.maxSampledSurfaceDistanceMeters || 0)) * 1000).toFixed(3)} 毫米` : null],
     ['压缩纹理显存（估算）', report.textureResidency?.withMipChainBytes > 0 ? (() => {
@@ -670,6 +675,8 @@ async function bootstrap() {
     }
     $('#rebuildTop').options[1].disabled = !sidecar.rebuildTop
     $('#topSealDistance').disabled = !sidecar.rebuildTop
+    $('#generatePreview').disabled = sidecar.available && !sidecar.preview
+    if ($('#generatePreview').disabled) $('#generatePreview').checked = false
     if (state.config.pickerAvailable) {
       for (const button of document.querySelectorAll('.pick')) button.hidden = false
     }

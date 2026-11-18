@@ -33,7 +33,7 @@ ENU 写法为 `ENU:纬度,经度[,高度]`，`--origin` 表示源坐标系中的
 
 当前并发粒度是入口根块，工作线程数取请求值、硬件线程数、入口数量的最小值。单个索引入口仍按引用逐文件处理；报告区分 `requestedThreads` 和实际 `threads`。`--memory-budget MiB` 仅门控后续独立根块的提交，不是单文件峰值的硬上限。
 
-显式有损功能：`--rebuild-top` 按源根空间分组新增父层，平均面数预算、边界/材质约束 QEM、UV 展开和 1024 纹理烘焙，原源子树完整保留；`--geometry draco --draco-speed 5` 使用 POSITION14/UV12（另 NORMAL10/COLOR8），速度档支持 0/5/10；`--texture-format uastc|etc1s` 生成 sRGB KTX2 与完整 mip 链，宽高对齐并限制到 4…4096，保留 alpha。默认 `--texture-format original`。四项可组合；有损内容与误差在报告中单独记录，不能据此声明同画质性能通过。行为及限制见 [SPEC.md](SPEC.md) 的「可选有损功能」。
+显式有损功能：`--rebuild-top` 按源根空间分组新增父层，平均面数预算、边界/材质约束 QEM、UV 展开和 1024 纹理烘焙，原源子树完整保留；`--preview` 另生成独立轻量预览（前沿 QEM、图集 UASTC、Meshopt GLB、浅空间树），不改变主产物；`--geometry draco --draco-speed 5` 使用 POSITION14/UV12（另 NORMAL10/COLOR8），速度档支持 0/5/10；`--texture-format uastc|etc1s` 生成 sRGB KTX2 与完整 mip 链，宽高对齐并限制到 4…4096，保留 alpha。默认 `--texture-format original`。四项可组合；有损内容与误差在报告中单独记录，不能据此声明同画质性能通过。行为及限制见 [SPEC.md](SPEC.md) 的「可选有损功能」。
 
 构建额外静态编译官方 Draco 1.5.7 和 Basis Universal 1.16.4（Apache-2.0），由 `cmake/Codecs.cmake` 获取固定 tag 并核对提交；允许用 `FETCHCONTENT_SOURCE_DIR_DRACO` / `FETCHCONTENT_SOURCE_DIR_BASIS_UNIVERSAL` 指向对应提交的 Git 缓存。运行时无需额外编码 CLI 或 Node 运行时。
 
@@ -61,6 +61,8 @@ PROJ 数据库静态内嵌，分发模式仅使用内嵌资源；不再绑定开
 - `textures/*`：原 JPEG/PNG 编码透传；原始 8 位像素转无损 PNG。
 - `tiles/*.json`：逐源文件清单，供定位与核查；主入口已内联层级，不需要逐文件请求这些 JSON。
 - `conversion-report.json`：完成状态、源文件与内容映射、图片、坐标误差及处理统计。
+- 开启 `--preview` 时另有 `preview/tileset.json`、`preview/content/*.glb`、`preview/textures/*.ktx2`
+  与 `preview/preview-report.json`；主报告增加 `preview` 摘要，预览不改变上述主产物。
 
 原始几何不减面，不进行 Draco 重新量化。分页引用缺失、循环引用、无法等价表达的材质/数据类型会报错，不以白图、丢瓦片或“进度完成”代替成功。
 
