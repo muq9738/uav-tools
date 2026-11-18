@@ -723,13 +723,33 @@ def main():
         run(['ctest', '--test-dir', build, '--output-on-failure', '--parallel', '2'])
     resources = stage(binary, sdk, build, vc_dirs)
     run(['go', 'test', '-p=2', './...', '-count=1'], cwd=APP)
+    env = dict(os.environ, CGO_ENABLED='0', GOMAXPROCS='2')
+    if SYSTEM == 'windows':
+        # 同一个 console 构建用于便携目录和桌面包的浏览器入口。
+        run(['go', 'build', '-p=2', '-o', resources / 'osgb-tiles-browser.exe', './cmd/osgb-tiles-app'], cwd=APP, env=env)
+        (resources / 'Start Browser.cmd').write_text(
+            '@echo off\ncd /d "%~dp0"\n'
+            '"%~dp0osgb-tiles-browser.exe" --browser\n'
+            'if errorlevel 1 pause\n', encoding='ascii', newline='\r\n')
+        (resources / 'README-Windows.txt').write_text(
+            'Windows x64 完整包：请先解压整个目录，保留 bin、插件、DLL 和 licenses。\n'
+            '便携桌面包：双击 OSGB 转 3D Tiles.exe；不需要安装本应用。\n'
+            '可选个人安装：运行 osgb-tiles-setup-*.exe，默认安装到当前用户的 LocalAppData\\Programs，无需管理员权限。\n'
+            '没有 WebView2 或不想安装：运行 Start Browser.cmd；在浏览器手动填写本机路径，按终端 Ctrl+C 停止。\n'
+            '若需要桌面窗口，可从微软下载 WebView2 安装器，以普通用户身份运行：\n'
+            'https://go.microsoft.com/fwlink/p/?LinkId=2124703\n'
+            '企业策略可能限制运行时安装；本包不会自动提权或安装 WebView2。\n', encoding='utf-8-sig')
     if args.skip_desktop:
         dest = APP / 'dist' / PLATFORM / 'portable'
         if dest.exists():
             shutil.rmtree(dest)
         shutil.copytree(resources, dest)
-        env = dict(os.environ, CGO_ENABLED='0', GOMAXPROCS='2')
-        run(['go', 'build', '-p=2', '-o', dest / ('osgb-tiles-app' + EXE), './cmd/osgb-tiles-app'], cwd=APP, env=env)
+        if SYSTEM == 'windows':
+            (dest / 'osgb-tiles-browser.exe').rename(dest / 'osgb-tiles-app.exe')
+            launcher = dest / 'Start Browser.cmd'
+            launcher.write_bytes(launcher.read_bytes().replace(b'osgb-tiles-browser.exe', b'osgb-tiles-app.exe'))
+        else:
+            run(['go', 'build', '-p=2', '-o', dest / ('osgb-tiles-app' + EXE), './cmd/osgb-tiles-app'], cwd=APP, env=env)
         (dest / 'README.txt').write_text('运行 osgb-tiles-app --headless；使用终端显示的本机地址。命令行转换使用 bin/osgb-tiles。请整体移动目录。\n', encoding='utf-8')
         verify_resources(dest, expected_platform=PLATFORM)
         print(f'便携包: {dest}', flush=True)

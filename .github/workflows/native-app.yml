@@ -130,6 +130,10 @@ jobs:
       - name: Seal and verify desktop resources
         shell: bash
         run: python app/scripts/build.py --finalize-package "app/dist/${{ matrix.platform }}"
+      - name: Verify Windows portable and personal installation
+        if: runner.os == 'Windows'
+        shell: bash
+        run: python app/tests/verify_windows_package.py --package "app/dist/${{ matrix.platform }}"
       - name: Verify packaged macOS disk image
         if: runner.os == 'macOS'
         shell: bash
@@ -147,6 +151,8 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: osgb-tiles-${{ matrix.platform }}
-          path: |
-            app/dist/${{ matrix.platform }}/
-            .agents-debug/ci/parity/
+          path: app/dist/${{ matrix.platform }}/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: parity-evidence-${{ matrix.platform }}
+          path: .agents-debug/ci/parity/
