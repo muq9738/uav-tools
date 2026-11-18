@@ -286,6 +286,8 @@ def collect_licenses(sdk, build_dir, destination, copied_sources):
     add(ROOT / 'LICENSE', 'licenses/product/LICENSE')
     add(ROOT / 'native/third_party/nlohmann/LICENSE.MIT', 'licenses/bundled/nlohmann/LICENSE.MIT')
     add(ROOT / 'native/third_party/meshoptimizer/LICENSE.md', 'licenses/bundled/meshoptimizer/LICENSE.md')
+    add(APP / 'web/vendor/cesium/LICENSE.md', 'licenses/bundled/cesium/LICENSE.md')
+    add(APP / 'web/vendor/cesium/SOURCE.json', 'licenses/bundled/cesium/SOURCE.json')
     for name in ['draco', 'basis-universal', 'basis-zstd', 'basis-pvpngreader']:
         add(ROOT / 'native/third_party/codecs' / f'{name}.LICENSE', f'licenses/bundled/{name}/LICENSE')
     add(ROOT / 'native/third_party/codecs/SOURCE.json', 'licenses/bundled/codecs/SOURCE.json')

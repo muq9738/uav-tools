@@ -1,120 +1,180 @@
 # OSGB → 3D Tiles
 
-把 OpenSceneGraph 的分块倾斜摄影模型（`.osgb`）转换成可在 Cesium 等 Web 引擎直接加载的
-**3D Tiles 1.1**：一份 `tileset.json` 层级、若干 GLB 内容与原始编码贴图，并附带逐文件可核对的转换报告。
+**Convert tiled OpenSceneGraph photogrammetry into streamable 3D Tiles 1.1 — then inspect the result without leaving the app.**
 
-转换核心是 C++17 原生程序，不依赖 Node / JavaScript 运行时；配套一个 Go 编写的本地 Web App，
-用同一份随包二进制完成桌面与便携分发。
+[English](README.md) · [简体中文](README.zh-CN.md)
 
-## 特性
+[![License: MIT](https://img.shields.io/badge/license-MIT-27845f)](LICENSE)
+[![3D Tiles: 1.1](https://img.shields.io/badge/3D%20Tiles-1.1-3565d4)](native/SPEC.md)
+[![Cesium: 1.136](https://img.shields.io/badge/Cesium-1.136-6c5ce7)](app/web/vendor/cesium/SOURCE.json)
 
-**默认保真路径**
+A native **C++17 converter**, a **Go desktop and HTTP app**, and an **offline Cesium viewer** in one toolkit. The conversion runtime needs no Node.js, cloud service, browser extension, or separate browser process.
 
-- 按 PagedLOD / Proxy 外部引用还原完整层级，保留最细层与全部可达内容。
-- 顶点、UV、法线、颜色不做量化或简化；DrawArrays / STRIP / FAN 正确展开为三角形。
-- 原始 JPEG / PNG 编码字节直接透传，不重编码、不缩放、不用占位图。
-- 几何压缩为无量化 meshopt，三角形索引使用有向面压缩（仅允许每面循环起点变化）。
-- 双精度完成 SRS 投影与局部居中后才写出 FLOAT，避免 ECEF 大坐标精度损失。
+## Highlights
 
-**可选有损功能（默认关闭）**
+### Fidelity first
 
-| 选项 | 作用 | 影响 |
-| --- | --- | --- |
-| `--rebuild-top` | 按源根空间分组新增远景父层：几何合并、QEM 减面、UV 展开与 1024 图集烘焙 | 新增祖先层有损；原始子树与贴图完整保留 |
-| `--geometry draco` | Draco 顶点压缩，POSITION14 / UV12 / NORMAL10 / COLOR8，速度档 `0\|5\|10` | 量化改变几何数值 |
-| `--texture-format uastc` | KTX2 UASTC 压缩纹理，sRGB、完整 mip 链、保留 alpha | 像素有损，文件通常明显变大 |
-| `--texture-format etc1s` | KTX2 ETC1S 压缩纹理 | 像素有损，体积显著小于 UASTC |
+- Reconstructs the reachable `PagedLOD` hierarchy and external references without dropping the finest available content.
+- Preserves vertex positions, UVs, normals, colors, triangle winding, and original JPEG/PNG encoded bytes by default.
+- Uses quantization-free Meshopt compression by default. Geometry values are not simplified or quantized.
+- Performs SRS projection and local centering in double precision before writing glTF `FLOAT` values.
+- Publishes output only after referenced assets, buffer ranges, extension declarations, and bounding volumes pass integrity checks.
 
-四项可自由组合。报告会分别给出量化位数、实测位置/UV 误差、图集采样偏移与实际编码结果，
-不会把有损产物标成保真。
+### Optimization when you want it
 
-**转换工程**
+Draco geometry quantization, KTX2 UASTC/ETC1S textures, and reconstructed distant parent levels are **opt-in**. They can be combined freely, while lossy settings and measured errors are recorded separately in the conversion report.
 
-- 文件级并发与可选内存预算；每处理完一个源文件即释放节点与解码图像。
-- 基于内容寻址的检查点：`--checkpoint-dir` 支持跨进程暂停与真正续转，输入、参数、转换器或资产
-  任一变化都会拒绝复用。
-- 发布前完整性校验：入口/分文件清单引用的 GLB、图片、buffer 范围、扩展声明与包围体逐项检查，
-  缺项或损坏不发布。
-- `--json-events` 输出真实进度；`--capabilities` 提供机器可读契约，供 App 校验随包二进制。
+### A preview that feels built in
 
-## 目录结构
+Completed jobs open directly in the app's existing system WebView. The bundled Cesium 1.136 viewer loads the actual output — not a separate render or approximation — with model-centric navigation, useful camera presets, quality controls, and live tile statistics.
 
-```
-native/          C++17 转换核心，CLI 为 osgb-tiles
-app/             Go 本地 Web App（桌面/便携/容器），调用随包 native
-data/            合成测试用 OSGB 样例
-```
+- Left-drag to orbit around the model surface; right- or middle-drag to pan; scroll to zoom toward the viewport center.
+- Switch between perspective, top, and front views, or reset the camera with one click.
+- Choose **Smooth**, **Balanced**, or **Detailed** instead of tuning an unexplained graphics parameter.
+- High-DPI rendering, 4× MSAA, FXAA, 4× anisotropic filtering, and on-demand rendering at up to 30 fps.
+- Fully offline Cesium assets; closing the preview releases its WebGL context, workers, and tile cache.
 
-## 快速开始
+### Built for real jobs
 
-### 构建转换器
+- File-level parallelism and optional memory-budget scheduling.
+- Cooperative cancellation, structured progress events, and persistent job history.
+- Content-addressed checkpoints for pause and genuine resume across processes.
+- A single packaged native binary shared by the CLI and app, so their defaults and output stay aligned.
+- Local-only HTTP by default; explicit address and access-token controls for exposed deployments.
 
-依赖 OpenSceneGraph 3.6、PROJ 9.6.2、libpng、libxml2、Threads。
-Draco 1.5.7 与 Basis Universal 1.16.4 由 `native/cmake/Codecs.cmake` 按固定 tag 拉取并核对提交。
+## Quick start
+
+### Build the desktop app on macOS
+
+Prerequisites: C++17, CMake, Ninja, Python 3, Go, and the libraries below. The build also downloads pinned PROJ, Draco, and Basis Universal sources as needed.
 
 ```bash
-cd native
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
-./build/osgb-tiles --help
+brew install openscenegraph libpng libxml2 sqlite ninja
+python3 app/scripts/build.py --sdk-prefix "$(brew --prefix)"
+open "app/dist/darwin-arm64/OSGB 转 3D Tiles.app"
 ```
 
-### 命令行转换
+The build script compiles the converter, runs native and Go tests, collects the runtime and third-party licenses, verifies dependency closure, and creates both the `.app` and a DMG under `app/dist/darwin-arm64/`.
+
+### Convert from the command line
+
+For a converter-only development build:
 
 ```bash
-DYLD_LIBRARY_PATH=/opt/homebrew/lib \
-./build/osgb-tiles /path/to/osgb/input /path/to/output \
+cmake -S native -B native/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build native/build -j 4
+
+./native/build/osgb-tiles /path/to/osgb /path/to/new-tiles \
   --threads 4 \
-  --srs 'EPSG:32651' --origin '224107.81419846753,3366639.462932359,-66.472'
+  --geometry meshopt \
+  --texture-format original
 ```
 
-输出目录内为 `tileset.json`、`content/*.glb`、`textures/*` 与 `conversion-report.json`。
-目标目录必须不存在或为空，转换在独立暂存目录完成后整体发布。
+`INPUT` can be an OSGB directory or an index `.osgb` file. Keep referenced sibling tiles beside the index. The output directory must be new or empty.
 
-### 运行 App
+When `metadata.xml` does not provide a usable spatial reference, specify it explicitly:
 
 ```bash
-python3 app/scripts/build.py            # 构建 App 与随包 native
-./app/dist/*/portable/osgb-tiles-app --headless
+./native/build/osgb-tiles /path/to/root.osgb /path/to/new-tiles \
+  --srs 'EPSG:32651' \
+  --origin '224107.81419846753,3366639.462932359,-66.472'
 ```
 
-终端会打印本机地址，用浏览器打开即可选目录、设置参数并查看任务进度。
+ENU is also supported: `--srs 'ENU:latitude,longitude[,height]'`.
 
-## 常用参数
+### Run the app as a local web service
 
-| 参数 | 说明 |
+```bash
+./osgb-tiles-app --headless --addr 127.0.0.1:8990
+```
+
+Open the printed local URL to create jobs, follow progress, inspect logs, pause/resume supported conversions, and preview completed output. For non-loopback listening, also set `--token` and `--data-dir`.
+
+## Output
+
+```text
+new-tiles/
+├── tileset.json             # 3D Tiles 1.1 entry point
+├── content/*.glb            # Geometry and material payloads
+├── textures/*               # Original images or KTX2 output
+├── tiles/*.json             # Per-source diagnostic manifests
+└── conversion-report.json   # Source mapping, encoding, errors, and statistics
+```
+
+Load `tileset.json` in a compatible 3D Tiles client. Meshopt output requires `EXT_meshopt_compression` support; Draco and KTX2 variants require their corresponding decoders. The bundled viewer supports all three.
+
+## Viewer controls
+
+| Input | Action |
 | --- | --- |
-| `--threads N` | 文件级并发数，1–64 |
-| `--memory-budget MiB` | 仅当已驻留内存低于预算时提交下一个根块；不等于单文件峰值上限 |
-| `--srs` / `--origin` | 坐标参考与原点；缺省读取 `metadata.xml` |
-| `--geometry raw\|meshopt\|draco` | 几何编码，默认 `meshopt` |
-| `--texture-format original\|uastc\|etc1s` | 纹理编码，默认 `original` |
-| `--rebuild-top` | 新增有损远景层 |
-| `--checkpoint-dir` / `--pause-file` / `--resume` | 暂停与续转 |
-| `--json-events` / `--cancel-file` | 结构化进度与合作取消 |
-| `--capabilities` | 输出能力契约 JSON |
+| Left-drag | Orbit around the picked model-surface center |
+| Right-drag / middle-drag | Pan |
+| Mouse wheel / pinch | Zoom |
+| **Perspective / Top / Front** | Switch camera preset |
+| **H** or fit button | Reset to the perspective overview |
+| **2** | Top view |
+| **F** | Toggle fullscreen |
+| **Esc** | Close the embedded preview |
+| Smooth / Balanced / Detailed | Adjust streaming detail and screen-space error |
 
-完整行为合同见 [native/SPEC.md](native/SPEC.md)，构建与分发细节见 [native/README.md](native/README.md)
-与 [app/README.md](app/README.md)。
+## Conversion options
 
-## 测试
+| Option | Default | Behavior |
+| --- | --- | --- |
+| `--threads N` | `2` | File-level concurrency, from 1 to 64 |
+| `--geometry raw\|meshopt\|draco` | `meshopt` | Raw comparison mode, quantization-free Meshopt, or quantized Draco |
+| `--texture-format original\|uastc\|etc1s` | `original` | Original encoded images or KTX2 GPU textures |
+| `--rebuild-top` | Off | Adds simplified distant ancestors while preserving original subtrees |
+| `--memory-budget MiB` | `0` | Gates submission of later root blocks; not a hard per-file peak limit |
+| `--srs` / `--origin` | From metadata | Spatial reference and source-coordinate origin |
+| `--checkpoint-dir` / `--pause-file` / `--resume` | Off | File-boundary pause and verified resume |
+| `--json-events` / `--cancel-file` | Off | Structured progress and cooperative cancellation |
+| `--capabilities` | — | Prints the machine-readable native capability contract |
 
-```bash
-cd native/build && ctest --output-on-failure
-cd app && go test ./...
+Lossy features are never presented as lossless. UASTC improves GPU residency and decoding behavior but usually produces much larger files than JPEG. Rebuilt-parent texture baking is also lossy; its sampling offset is reported and is not an upper bound for whole-surface error.
+
+## Project layout
+
+```text
+native/   C++17 converter, CLI, specifications, and native tests
+app/      Go/MyGo desktop and HTTP app, embedded Cesium viewer, packaging
+data/     Small synthetic OSGB fixtures
 ```
 
-原生回归覆盖 OSGB 读写、引用与分页边界、坐标与法线、纹理兼容、暂停续转、发布校验、
-顶层重建与编码参数；Node 侧提供独立访问器与三角形朝向校验，避免用自己的解码器验证自己的编码器。
+The app invokes the packaged `osgb-tiles` binary directly. There is one converter implementation and one runtime, shared by desktop, portable, and CLI distribution.
 
-## 已知限制
+## Tests and verification
 
-- 已验证平台为 macOS arm64；`.github/workflows/native-app.yml` 提供 macOS / Linux / Windows 的构建矩阵，但除 macOS arm64 外尚未实测。
-- `--texture-format uastc` 体积通常远大于等效 JPEG，适合优先考虑显存与解码、而非传输体积的场景。
-- 远景层烘焙为有损过程，采样偏移在报告中单列，不等于全表面误差上界。
-- 小视图几何不做压缩；收益不足以覆盖扩展元数据时保留原始表示。
+```bash
+# Native behavior and regression tests
+ctest --test-dir native/build --output-on-failure
 
-## 许可
+# App, API, job management, and preview resource isolation
+cd app && go test ./...
 
-本项目使用 [MIT](LICENSE) 协议。第三方依赖（OpenSceneGraph、PROJ、libpng、libxml2、
-Draco、Basis Universal 等）遵循各自许可，随分发包含许可文本。
+# Distribution metadata tests
+python3 app/tests/test_distribution.py
+
+# Verify a staged package and its resource hashes
+python3 app/scripts/build.py --verify-package app/dist/darwin-arm64
+```
+
+The test suite covers paging and references, geometry and coordinate handling, texture compatibility, encoding round trips, publication integrity, pause/resume, HTTP job management, and preview path containment. Independent decoders are used for critical geometry checks rather than validating the encoder only with itself.
+
+## Platform status
+
+- **macOS arm64:** built and validated with the packaged desktop app, CLI, runtime, and embedded Cesium preview.
+- **Linux and Windows:** build definitions are provided in `.github/workflows/native-app.yml`, but full native, model, and desktop validation has not been completed.
+- Windows requires WebView2; Linux desktop use requires the applicable WebKit and desktop services. Portable HTTP mode has a smaller platform surface.
+
+## Documentation
+
+- [Converter behavior and build details](native/README.md)
+- [Native behavior specification](native/SPEC.md)
+- [App, packaging, and distribution](app/README.md)
+- [HTTP API](app/docs/HTTP-API.md)
+- [Pause and resume contract](app/docs/PAUSE-RESUME.md)
+
+## License
+
+Released under the [MIT License](LICENSE). OpenSceneGraph, PROJ, Cesium, Draco, Basis Universal, and other third-party components retain their own licenses; the corresponding notices and source information are included in packaged distributions.

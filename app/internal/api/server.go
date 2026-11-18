@@ -75,14 +75,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/jobs/{id}/resume", s.handleResumeJob)
 	mux.HandleFunc("GET /api/jobs/{id}/logs", s.handleLogs)
 	mux.HandleFunc("GET /api/jobs/{id}/events", s.handleEvents)
+	mux.HandleFunc("GET /api/jobs/{id}/tiles/{path...}", s.handleTileAsset)
 	mux.Handle("GET /", s.staticHandler())
 	return s.authenticate(mux)
 }
 
-// authenticate 在设置了令牌时校验 Bearer 头或 token 查询参数（供 EventSource 使用）。
+// authenticate 校验 API 的 Bearer 头或 token 查询参数（供 EventSource 使用）。
+// 静态界面资源不含用户数据，保持公开以便 Cesium 的 script、CSS 与 Worker 直接加载。
 func (s *Server) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.options.Token != "" {
+		if s.options.Token != "" && strings.HasPrefix(r.URL.Path, "/api/") {
 			presented := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 			if presented == "" {
 				presented = r.URL.Query().Get("token")

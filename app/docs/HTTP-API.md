@@ -15,6 +15,7 @@
 | POST | `/api/jobs/{id}/resume` | 将已暂停任务重新排队，必要时续用检查点 |
 | GET | `/api/jobs/{id}/logs?after=0&limit=200` | 增量日志与下一游标 |
 | GET | `/api/jobs/{id}/events?after=0` | SSE 状态、进度和日志 |
+| GET | `/api/jobs/{id}/tiles/{path}` | 成功任务的 Cesium 预览资源；支持 Range，限制在输出目录内 |
 | POST | `/api/pick-directory` | 桌面目录选择；无桌面支持 501 |
 | POST | `/api/jobs/{id}/reveal` | 打开输出目录；无桌面支持 501，目录未创建 409 |
 
@@ -41,5 +42,7 @@ input 可以是目录或索引 `.osgb`。除了 input/output 均可省略：默�
 任务可包含管理器分配的 `checkpointDir`、`resumeRequired` 和最近一次 `pausedAt`；这些字段不能放入创建请求。已实际转换且确认暂停的任务 `resumeRequired=true`，继续时复用原任务参数与检查点。paused 的 `finishedAt` 为空；运行后暂停的 `exitCode=75` 和 `report.status=paused` 代表上一轮暂停结果，尚未启动的排队暂停没有退出码或报告。继续会清除上一轮报告与退出码。
 
 SSE 含 state/progress/log 等通知及任务快照，连接在 paused 时保持，可以观察后续继续。日志按 seq 增量查询，继续及重启不重置序号。重启保留 paused 历史，不自动排队；queued/running/pausing 标为中断失败，不能将未确认的暂停当成有效检查点。详见 [App 暂停与续转规格](PAUSE-RESUME.md)。
+
+预览入口为 `/viewer.html?job={id}`；带令牌部署时附加 `&token=…`。查看器对 tileset 及其派生 GLB、纹理请求使用 Bearer 头。静态界面、Cesium 脚本与 Worker 不含用户数据，不需要令牌；所有 `/api/` 接口仍要求令牌。任务非 `succeeded` 时资源接口返回 409，缺失文件或逃逸输出目录的符号链接返回 404。
 
 App/native 的事件、取消和分发合同见 [NATIVE-CONTRACT](NATIVE-CONTRACT.md)。

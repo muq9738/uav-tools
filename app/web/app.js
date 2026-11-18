@@ -144,6 +144,9 @@ function renderJobs() {
     const ops = document.createElement('div')
     ops.className = 'ops'
     ops.append(...jobActions(job))
+    if (job.state === 'succeeded') {
+      ops.append(linkButton('预览', () => openPreview(job.id), 'preview-link'))
+    }
     if (state.config?.revealAvailable && job.state === 'succeeded') {
       ops.append(linkButton('打开目录', async () => {
         try { await api(`/api/jobs/${job.id}/reveal`, { method: 'POST' }) }
@@ -238,6 +241,25 @@ async function refreshJobs() {
     notify('无法读取任务列表：' + error.message, true)
   }
 }
+
+// ---------- Cesium 预览 ----------
+
+function openPreview(id) {
+  const dialog = $('#preview-dialog')
+  $('#preview-frame').src = withToken(`/viewer.html?job=${encodeURIComponent(id)}`)
+  dialog.showModal()
+}
+
+$('#preview-dialog').addEventListener('close', () => {
+  // 销毁 WebGL、Worker 与瓦片缓存，避免关闭预览后仍占用显存。
+  $('#preview-frame').src = 'about:blank'
+})
+
+window.addEventListener('message', event => {
+  if (event.origin === location.origin && event.data?.type === 'close-preview') {
+    $('#preview-dialog').close()
+  }
+})
 
 // ---------- 添加任务 ----------
 
@@ -355,6 +377,9 @@ function renderDetail(job) {
   time.textContent = elapsed(job)
   status.append(badge, time)
   status.append(...jobActions(job))
+  if (job.state === 'succeeded') {
+    status.append(linkButton('预览模型', () => openPreview(job.id)))
+  }
   if (state.config?.revealAvailable && job.state === 'succeeded') {
     status.append(linkButton('打开输出目录', async () => {
       try { await api(`/api/jobs/${job.id}/reveal`, { method: 'POST' }) }

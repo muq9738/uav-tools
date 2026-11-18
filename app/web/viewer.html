@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模型预览 · 景构</title>
+<link rel="stylesheet" href="/vendor/cesium/Widgets/widgets.css">
+<link rel="stylesheet" href="/viewer.css">
+<script>window.CESIUM_BASE_URL = '/vendor/cesium/';</script>
+</head>
+<body>
+<header class="viewer-bar">
+  <button id="close" class="back" type="button" title="返回任务（Esc）">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m14 6-6 6 6 6M8 12h11"/></svg>
+    <span>返回任务</span>
+  </button>
+  <span class="bar-divider" aria-hidden="true"></span>
+  <div class="model-name">
+    <strong>模型预览</strong>
+    <span id="job-name">正在读取任务</span>
+  </div>
+  <nav class="view-switch" aria-label="相机视角">
+    <button type="button" data-view="orbit" class="active" aria-pressed="true" disabled>透视</button>
+    <button type="button" data-view="top" aria-pressed="false" disabled>俯视</button>
+    <button type="button" data-view="front" aria-pressed="false" disabled>正视</button>
+  </nav>
+  <div class="viewer-actions">
+    <label class="quality" for="quality" title="调整模型细节等级">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m12 3 8 4-8 4-8-4 8-4Zm-8 9 8 4 8-4M4 17l8 4 8-4"/></svg>
+      <select id="quality" aria-label="画质">
+        <option value="24">流畅</option>
+        <option value="16" selected>均衡</option>
+        <option value="8">精细</option>
+      </select>
+    </label>
+    <button id="fit" class="icon-button" type="button" disabled title="适应模型（H）" aria-label="适应模型">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M8 4H4v4m12-4h4v4M4 16v4h4m12-4v4h-4"/></svg>
+    </button>
+    <button id="fullscreen" class="icon-button" type="button" title="全屏（F）" aria-label="全屏">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg>
+    </button>
+  </div>
+</header>
+<main id="viewport">
+  <div id="cesium" aria-label="可交互三维模型"></div>
+  <div id="loading" class="loading" role="status" aria-live="polite">
+    <div class="loading-card">
+      <span class="spinner" aria-hidden="true"></span>
+      <strong>正在准备模型</strong>
+      <span id="loading-detail">读取 tileset.json</span>
+      <span class="loading-track" aria-hidden="true"><i id="loading-progress"></i></span>
+    </div>
+  </div>
+  <div id="error" class="viewer-error" role="alert" hidden>
+    <strong>暂时无法显示模型</strong>
+    <p id="error-message"></p>
+    <button id="retry" type="button">重新加载</button>
+  </div>
+  <div id="notice" class="view-notice" role="status" hidden></div>
+  <div id="orbit-reticle" class="orbit-reticle" aria-hidden="true" hidden><i></i></div>
+  <div id="stats" class="stats" aria-live="polite">
+    <span class="load-state"><i class="status-dot"></i><b id="load-state">初始化</b></span>
+    <span>瓦片 <b id="selected">0</b></span>
+    <span>三角面 <b id="triangles">0</b></span>
+  </div>
+  <div class="navigation-hint">
+    <span><kbd>左键</kbd> 旋转</span><i></i><span><kbd>右键</kbd> 平移</span><i></i><span><kbd>滚轮</kbd> 缩放</span><i></i><span><kbd>H</kbd> 复位</span>
+  </div>
+</main>
+<script src="/vendor/cesium/Cesium.js"></script>
+<script type="module" src="/viewer.js"></script>
+</body>
+</html>

@@ -5,5 +5,5 @@ import "embed"
 
 // Files 是界面资源。
 //
-//go:embed index.html app.css app.js
+//go:embed index.html app.css app.js viewer.html viewer.css viewer.js viewer-camera.js vendor/cesium
 var Files embed.FS

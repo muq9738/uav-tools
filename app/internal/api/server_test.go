@@ -280,8 +280,13 @@ func TestTokenProtectsAPI(t *testing.T) {
 	if status, _ := getJSON(t, server.URL+"/api/health?token=secret"); status != http.StatusOK {
 		t.Fatalf("查询参数令牌应 200，实际 %d", status)
 	}
-	if status, _ := getJSON(t, server.URL+"/", "Authorization", "Bearer wrong"); status != http.StatusUnauthorized {
-		t.Fatalf("错误令牌访问页面应 401，实际 %d", status)
+	response, err := http.Get(server.URL + "/viewer.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("查看器静态脚本应无需令牌加载，实际 %d", response.StatusCode)
 	}
 }
 
