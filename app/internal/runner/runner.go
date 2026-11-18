@@ -30,6 +30,7 @@ type Defaults struct {
 	Geometry        string  `json:"geometry"`
 	MemoryBudgetMiB uint64  `json:"memoryBudgetMiB"`
 	TexturePixels   bool    `json:"texturePixels"`
+	Preview         bool    `json:"preview"`
 	RebuildTop      bool    `json:"rebuildTop"`
 	TopSealDistance float64 `json:"topSealDistance"`
 	TextureFormat   string  `json:"textureFormat"`
@@ -42,6 +43,7 @@ type Features struct {
 	JSONEvents      bool     `json:"jsonEvents"`
 	CancelFile      bool     `json:"cancelFile"`
 	PauseResume     bool     `json:"pauseResume"`
+	Preview         bool     `json:"preview"`
 	RebuildTop      bool     `json:"rebuildTop"`
 	TopSealDistance bool     `json:"topSealDistance"`
 	GeometryFormats []string `json:"geometryFormats"`
@@ -114,7 +116,7 @@ func (e *Exec) Features() Features {
 			e.features.Detail = "native 契约不是有效 JSON"
 			return
 		}
-		if capability.ProtocolVersion != 1 || !capability.JSONEvents || !capability.CancelFile || capability.Defaults.Geometry != "meshopt" || capability.Defaults.Threads != 2 || capability.Defaults.MemoryBudgetMiB != 0 || capability.Defaults.TexturePixels || capability.Defaults.RebuildTop || (capability.Defaults.TextureFormat != "" && capability.Defaults.TextureFormat != "original") || (capability.Defaults.DracoSpeed != nil && *capability.Defaults.DracoSpeed != 5) {
+		if capability.ProtocolVersion != 1 || !capability.JSONEvents || !capability.CancelFile || capability.Defaults.Geometry != "meshopt" || capability.Defaults.Threads != 2 || capability.Defaults.MemoryBudgetMiB != 0 || capability.Defaults.TexturePixels || capability.Defaults.Preview || capability.Defaults.RebuildTop || (capability.Defaults.TextureFormat != "" && capability.Defaults.TextureFormat != "original") || (capability.Defaults.DracoSpeed != nil && *capability.Defaults.DracoSpeed != 5) {
 			e.features.Detail = "native 契约与 App 不一致，请重新构建完整包"
 			return
 		}
@@ -135,6 +137,9 @@ func (e *Exec) Convert(ctx context.Context, spec jobs.Spec, control jobs.Control
 	features := e.Features()
 	if !features.Available {
 		return jobs.Result{}, errors.New(features.Detail)
+	}
+	if spec.Preview && !features.Preview {
+		return jobs.Result{}, errors.New("当前 native 不支持轻量预览，请更新完整包")
 	}
 	if spec.RebuildTop && !features.RebuildTop {
 		return jobs.Result{}, errors.New("当前 native 不支持重建顶层，请更新完整包")
@@ -195,6 +200,9 @@ func (e *Exec) Convert(ctx context.Context, spec jobs.Spec, control jobs.Control
 	}
 	if spec.TexturePixels {
 		args = append(args, "--texture-pixels")
+	}
+	if spec.Preview {
+		args = append(args, "--preview")
 	}
 	if spec.RebuildTop {
 		args = append(args, "--rebuild-top")
@@ -266,15 +274,16 @@ func (e *Exec) Convert(ctx context.Context, spec jobs.Spec, control jobs.Control
 		return result, fmt.Errorf("转换器以退出码 %d 结束：%s", exitCode, detail)
 	}
 	var report struct {
-		Status          string   `json:"status"`
-		Geometry        string   `json:"geometryEncoding"`
-		Budget          *uint64  `json:"memoryBudgetBytes"`
-		Threads         *int     `json:"requestedThreads"`
-		PreserveEncoded *bool    `json:"preserveEncodedTextures"`
-		RebuildTop      bool     `json:"rebuildTop"`
-		TopSealDistance *float64 `json:"topSealDistance"`
-		TextureFormat   string   `json:"textureFormat"`
-		DracoSpeed      int      `json:"dracoSpeed"`
+		Status          string          `json:"status"`
+		Geometry        string          `json:"geometryEncoding"`
+		Budget          *uint64         `json:"memoryBudgetBytes"`
+		Threads         *int            `json:"requestedThreads"`
+		PreserveEncoded *bool           `json:"preserveEncodedTextures"`
+		RebuildTop      bool            `json:"rebuildTop"`
+		TopSealDistance *float64        `json:"topSealDistance"`
+		TextureFormat   string          `json:"textureFormat"`
+		DracoSpeed      int             `json:"dracoSpeed"`
+		Preview         json.RawMessage `json:"preview"`
 	}
 	expected := spec.Geometry
 	if expected == "meshopt" {
@@ -294,7 +303,36 @@ func (e *Exec) Convert(ctx context.Context, spec jobs.Spec, control jobs.Control
 	if _, err := os.Stat(filepath.Join(spec.Output, "tileset.json")); err != nil {
 		return result, fmt.Errorf("native 未发布 tileset.json：%w", err)
 	}
+	if spec.Preview {
+		var preview struct {
+			Status           string `json:"status"`
+			Entry            string `json:"entry"`
+			Algorithm        string `json:"algorithm"`
+			GeometryEncoding string `json:"geometryEncoding"`
+			TextureFormat    string `json:"textureFormat"`
+		}
+		if json.Unmarshal(report.Preview, &preview) != nil || preview.Status != "complete" || preview.Entry != "preview/tileset.json" || preview.Algorithm != "mesh-preview-v1" || preview.GeometryEncoding != "EXT_meshopt_compression" || preview.TextureFormat != "uastc" {
+			return result, errors.New("native 轻量预览报告缺失或与预览契约不一致，拒绝标记成功")
+		}
+		if err := validatePreviewOutputs(spec.Output); err != nil {
+			return result, err
+		}
+	}
 	return result, nil
+}
+
+func validatePreviewOutputs(output string) error {
+	for _, name := range []string{"preview/tileset.json", "preview/preview-report.json"} {
+		raw, err := os.ReadFile(filepath.Join(output, filepath.FromSlash(name)))
+		if err != nil {
+			return fmt.Errorf("native 未发布 %s：%w", name, err)
+		}
+		var value any
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return fmt.Errorf("native 发布的 %s 不是有效 JSON：%w", name, err)
+		}
+	}
+	return nil
 }
 
 // sealMatches 校验 native 实际使用的焊缝距离与任务一致。任务未显式指定时
