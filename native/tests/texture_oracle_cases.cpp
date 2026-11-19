@@ -28,6 +28,10 @@
 #include <osgDB/ReadFile>
 #include <osgDB/WriteFile>
 #include <png.h>
+
+#ifndef GL_MIRRORED_REPEAT
+#define GL_MIRRORED_REPEAT 0x8370
+#endif
 #include <turbojpeg.h>
 #include <zlib.h>
 #include <algorithm>

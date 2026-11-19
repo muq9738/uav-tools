@@ -9,6 +9,10 @@
 #include <iostream>
 #include <stdexcept>
 
+#ifndef GL_MIRRORED_REPEAT
+#define GL_MIRRORED_REPEAT 0x8370
+#endif
+
 using namespace nt;
 namespace {
 void require(bool ok,const std::string& message) {if(!ok) throw std::runtime_error(message);}
