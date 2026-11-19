@@ -724,7 +724,21 @@ def main():
             configure += [f'-DFETCHCONTENT_SOURCE_DIR_PROJ={args.proj_source.resolve()}']
         run(configure)
         run(['cmake', '--build', build, '--parallel', '2'])
-        run(['ctest', '--test-dir', build, '--output-on-failure', '--parallel', '2'])
+        ctest_env = dict(os.environ)
+        if SYSTEM == 'windows':
+            osg_plugins = discover_osg_plugins(sdk)
+            extra_paths = [str(sdk / 'bin')]
+            plugin_dirs = []
+            for p in osg_plugins.values():
+                for d in (str(p.parent), str(p.parent.parent)):
+                    if d not in plugin_dirs:
+                        plugin_dirs.append(d)
+            if plugin_dirs:
+                existing_osg = ctest_env.get('OSG_LIBRARY_PATH', '')
+                ctest_env['OSG_LIBRARY_PATH'] = os.pathsep.join(plugin_dirs + ([existing_osg] if existing_osg else []))
+                extra_paths.extend(plugin_dirs)
+            ctest_env['PATH'] = os.pathsep.join(extra_paths + [ctest_env.get('PATH', '')])
+        run(['ctest', '--test-dir', build, '--output-on-failure', '--parallel', '2'], env=ctest_env)
     resources = stage(binary, sdk, build, vc_dirs)
     run(['go', 'test', '-p=2', './...', '-count=1'], cwd=APP)
     env = dict(os.environ, CGO_ENABLED='0', GOMAXPROCS='2')
