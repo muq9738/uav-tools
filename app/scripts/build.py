@@ -90,6 +90,7 @@ def is_system(name, system=SYSTEM):
 def find_sqlite3(sdk, system=SYSTEM):
     executable = 'sqlite3.exe' if system == 'windows' else 'sqlite3'
     candidates = [
+        sdk / 'tools' / executable,
         sdk / 'tools' / 'sqlite3' / executable,
         sdk / 'bin' / executable,
         sdk / 'opt' / 'sqlite' / 'bin' / executable,

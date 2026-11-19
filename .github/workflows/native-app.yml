@@ -100,10 +100,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build g++ python3 patchelf sqlite3 libsqlite3-dev libopenscenegraph-dev libpng-dev libxml2-dev libturbojpeg0-dev
           echo 'OSGB_SDK=/usr' >> "$GITHUB_ENV"
-      - name: Cache Windows SDK
+      - name: Restore Windows SDK cache
         id: vcpkg-cache
         if: runner.os == 'Windows'
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: app/sdk/installed
           key: windows-vcpkg-sdk-v1-${{ hashFiles('app/sdk/vcpkg.json', 'app/sdk/triplets/**') }}
@@ -132,6 +132,12 @@ jobs:
             if (-not $found) { throw "缺少必需的 OSG 插件: $plugin" }
           }
           "OSGB_SDK=$sdk" >> $env:GITHUB_ENV
+      - name: Save Windows SDK cache
+        if: runner.os == 'Windows' && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: app/sdk/installed
+          key: windows-vcpkg-sdk-v1-${{ hashFiles('app/sdk/vcpkg.json', 'app/sdk/triplets/**') }}
       - name: Build and collect runtime
         shell: bash
         run: |
