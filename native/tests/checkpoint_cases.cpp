@@ -89,7 +89,7 @@ int main(int argc,char** argv) {
             fs::remove(options.pauseFile);options.event={};options.resume=true;return options;
         };
         auto resumedOptions=pause(3);std::map<std::string,fs::file_time_type> times;
-        require(jsonFile(resumedOptions.checkpointDir/"identity.json")["payload"]["inputs"].contains((temp/"external/original.png").u8string()),"身份必须包含输入目录外实际读取的原图");checks++;
+        require(jsonFile(resumedOptions.checkpointDir/"identity.json")["payload"]["inputs"].contains(fs::canonical(temp/"external/original.png").u8string()),"身份必须包含输入目录外实际读取的原图");checks++;
         for(const auto& item:fs::recursive_directory_iterator(resumedOptions.checkpointDir/"work")) if(item.is_regular_file())
             times[item.path().lexically_relative(resumedOptions.checkpointDir/"work").generic_u8string()]=fs::last_write_time(item.path());
         unsigned partial=0,finished=0;

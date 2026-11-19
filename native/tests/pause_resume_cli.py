@@ -14,7 +14,7 @@ source = root / "source"
 
 def call(output, *args):
     return subprocess.run([native, str(source), str(output), "--threads", "1", "--json-events", *map(str, args)],
-                          text=True, capture_output=True, timeout=60)
+                          text=True, encoding="utf-8", capture_output=True, timeout=60)
 
 def events(process):
     lines = [json.loads(line) for line in process.stdout.splitlines() if line.strip()]
@@ -25,7 +25,7 @@ def file_hashes(directory):
     return {str(file.relative_to(directory)): hashlib.sha256(file.read_bytes()).hexdigest()
             for file in directory.rglob("*") if file.is_file() and file.name != "conversion-report.json"}
 
-cap = json.loads(subprocess.check_output([native, "--capabilities"], text=True, timeout=10))
+cap = json.loads(subprocess.check_output([native, "--capabilities"], text=True, encoding="utf-8", timeout=10))
 assert cap["protocolVersion"] == 1 and cap["pauseResume"] is True
 assert cap["defaults"] == {"threads": 2, "geometry": "meshopt", "memoryBudgetMiB": 0, "texturePixels": False, "rebuildTop": False, "preview": False, "topSealDistance": 2.0, "textureFormat": "original", "dracoSpeed": 5}
 baseline = call(root / "baseline")
@@ -39,8 +39,8 @@ def stop_in_progress(mode):
     command = [native, str(source), str(output), "--threads", "1", "--json-events",
                "--checkpoint-dir", str(checkpoint), f"--{mode}-file", str(token)]
     received = []
-    with (root / f"{mode}.stderr").open("w") as error:
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=error, text=True, bufsize=1)
+    with (root / f"{mode}.stderr").open("w", encoding="utf-8") as error:
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=error, text=True, encoding="utf-8", bufsize=1)
         try:
             for line in process.stdout:
                 event = json.loads(line)
@@ -52,12 +52,12 @@ def stop_in_progress(mode):
             if process.poll() is None:
                 process.kill()
                 process.wait()
-    (root / f"{mode}.jsonl").write_text("\n".join(map(json.dumps, received)) + "\n")
+    (root / f"{mode}.jsonl").write_text("\n".join(map(json.dumps, received)) + "\n", encoding="utf-8")
     assert token.exists(), "No actual converted-file progress observed"
     return code, received
 
 code, paused = stop_in_progress("pause")
-assert code == 75, (code, paused, (root / "pause.stderr").read_text())
+assert code == 75, (code, paused, (root / "pause.stderr").read_text(encoding="utf-8"))
 assert paused[-1]["type"] == "result" and paused[-1]["report"]["status"] == "paused", paused
 count = paused[-1]["report"]["filesCompleted"]
 assert 1 <= count < 6, ("Fixture must pause before finishing all file instances", count)
@@ -73,7 +73,7 @@ report = events(resumed)[-1]["report"]
 assert report["status"] == "complete" and report["filesReused"] == count and report["filesCompleted"] == 6, report
 assert not checkpoint.exists()
 assert file_hashes(output) == expected, "Assets differ after process restart"
-assert json.loads((output / "conversion-report.json").read_text())["records"] == json.loads((root / "baseline/conversion-report.json").read_text())["records"]
+assert json.loads((output / "conversion-report.json").read_text(encoding="utf-8"))["records"] == json.loads((root / "baseline/conversion-report.json").read_text(encoding="utf-8"))["records"]
 for path, (mtime, content) in held.items():
     assert (output / path).read_bytes() == content
     assert (output / path).stat().st_mtime_ns == mtime, f"Re-encoded persisted asset: {path}"

@@ -190,7 +190,7 @@ fs::path resolveReference(const fs::path& source,const std::string& db,const std
         candidates.push_back(source.parent_path()/ref);
     }
     for(const auto& candidate:candidates) if(fs::is_regular_file(candidate)) return fs::canonical(candidate);
-    throw std::runtime_error("缺失 OSGB 分页引用: "+source.string()+" -> "+name);
+    throw std::runtime_error("缺失 OSGB 分页引用: "+source.u8string()+" -> "+name);
 }
 // OSG 序列化会省略外部孩子，并把常驻孩子压缩到数组前部；完整保留预载孩子时才按原槽位跳过。
 bool compactExternalChildren(unsigned children,unsigned files) {return children<files;}
@@ -229,7 +229,7 @@ struct Engine {
             for(unsigned i=0;i<paged->getNumChildren();++i) {
                 // 已预载的外部细层仍按文件引用处理，不能同时并入粗层几何。
                 if(!compact && i<paged->getNumFileNames() && !paged->getFileName(i).empty()) continue;
-                if(++resident>1) throw std::runtime_error("多个无文件引用的常驻 LOD 分支尚未映射: "+source.string());
+                if(++resident>1) throw std::runtime_error("多个无文件引用的常驻 LOD 分支尚未映射: "+source.u8string());
                 collect(paged->getChild(i),matrix,state.get(),source,meshes,out);
             }
             return;
@@ -269,7 +269,7 @@ struct Engine {
     FileResult convertFile(fs::path file,const osg::Matrixd& sourceTransform=osg::Matrixd::identity()) {
         if(options.checkCancelled) options.checkCancelled();
         file=fs::canonical(file);auto key=instanceKey(file,sourceTransform);
-        if(active.count(file)) throw std::runtime_error("检测到循环 OSGB 引用: "+file.string());
+        if(active.count(file)) throw std::runtime_error("检测到循环 OSGB 引用: "+file.u8string());
         if(auto it=cache.find(key);it!=cache.end()) return it->second;
         if(resume) resume->check();
         auto entryLock=resume?resume->checkpoint.lockEntry(key):std::unique_lock<std::mutex>();
@@ -297,7 +297,7 @@ struct Engine {
             osg::ref_ptr<osgDB::Options> readOptions=new osgDB::Options;
             readOptions->setObjectCacheHint(osgDB::Options::CACHE_NONE);
             auto node=osgDB::readRefNodeFile(file.u8string(),readOptions.get());
-            if(!node) throw std::runtime_error("OSGB 读取失败: "+file.string());
+            if(!node) throw std::runtime_error("OSGB 读取失败: "+file.u8string());
             std::vector<GeometryInput> meshes;
             if(options.splitPagedLod) {
                 auto group=node->asGroup();auto state=group?inherited(nullptr,group->getStateSet()):osg::ref_ptr<osg::StateSet>();
@@ -446,8 +446,8 @@ std::vector<double> csv(const std::string& value) {
 std::pair<std::string,std::string> readMetadata(const fs::path& path) {
     auto bytes=readBytes(path);
     std::unique_ptr<xmlDoc,decltype(&xmlFreeDoc)> doc(xmlReadMemory(reinterpret_cast<const char*>(bytes.data()),
-        static_cast<int>(bytes.size()),path.string().c_str(),nullptr,XML_PARSE_NONET),xmlFreeDoc);
-    if(!doc) throw std::runtime_error("metadata.xml 不是有效 XML: "+path.string());
+        static_cast<int>(bytes.size()),path.u8string().c_str(),nullptr,XML_PARSE_NONET),xmlFreeDoc);
+    if(!doc) throw std::runtime_error("metadata.xml 不是有效 XML: "+path.u8string());
     auto root=xmlDocGetRootElement(doc.get());if(!root) throw std::runtime_error("metadata.xml 没有根节点");
     auto field=[&](const char* name) {
         std::string result;bool found=false;
@@ -473,7 +473,7 @@ std::vector<fs::path> roots(const fs::path& input) {
         for(const auto& f:fs::directory_iterator(e.path()))
             if(f.is_regular_file() && lower(f.path().extension().string())==".osgb" && lower(f.path().stem().u8string())==lower(e.path().filename().u8string()))
                 matches.push_back(fs::canonical(f.path()));
-        if(matches.size()>1) throw std::runtime_error("块目录含多个仅大小写不同的入口: "+e.path().string());
+        if(matches.size()>1) throw std::runtime_error("块目录含多个仅大小写不同的入口: "+e.path().u8string());
         if(!matches.empty()) result.push_back(matches[0]);
     }
     std::sort(result.begin(),result.end());
@@ -484,13 +484,13 @@ std::vector<fs::path> roots(const fs::path& input) {
     std::map<fs::path,unsigned> visited;
     const auto walk=[&](auto&& self,const fs::path& file)->void {
         auto& mark=visited[file];
-        if(mark==1) throw std::runtime_error("根发现时检测到循环引用: "+file.string());
+        if(mark==1) throw std::runtime_error("根发现时检测到循环引用: "+file.u8string());
         if(mark==2) return;mark=1;
         std::vector<fs::path> refs;
         {
             osg::ref_ptr<osgDB::Options> options=new osgDB::Options;options->setObjectCacheHint(osgDB::Options::CACHE_NONE);
             auto node=osgDB::readRefNodeFile(file.u8string(),options.get());
-            if(!node) throw std::runtime_error("根发现时无法读取: "+file.string());
+            if(!node) throw std::runtime_error("根发现时无法读取: "+file.u8string());
             const auto collect=[&](auto&& recurse,osg::Node* n)->void {
                 if(auto paged=dynamic_cast<osg::PagedLOD*>(n)) {
                     for(unsigned i=0;i<paged->getNumFileNames();++i) if(!paged->getFileName(i).empty()) refs.push_back(resolveReference(file,paged->getDatabasePath(),paged->getFileName(i)));
@@ -551,7 +551,7 @@ Json convert(const Options& requested) {
     fs::path inputDir=fs::is_directory(options.input)?options.input:options.input.parent_path();
     auto metadata=inputDir/"metadata.xml";
     if(!fs::exists(metadata)) {
-        auto name=inputDir.filename().string();std::transform(name.begin(),name.end(),name.begin(),[](unsigned char c){return std::tolower(c);});
+        auto name=inputDir.filename().u8string();std::transform(name.begin(),name.end(),name.begin(),[](unsigned char c){return std::tolower(c);});
         if(name=="data") metadata=inputDir.parent_path()/"metadata.xml";
     }
     Json metadataIdentity;

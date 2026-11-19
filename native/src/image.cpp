@@ -20,7 +20,7 @@
 namespace nt {
 Bytes readBytes(const fs::path& p) {
     std::ifstream in(p, std::ios::binary);
-    if (!in) throw std::runtime_error("无法读取文件: " + p.string());
+    if (!in) throw std::runtime_error("无法读取文件: " + p.u8string());
     return Bytes(std::istreambuf_iterator<char>(in), {});
 }
 std::string contentKey(const Bytes& bytes) {
@@ -37,7 +37,7 @@ void atomicWrite(const fs::path& p,const Bytes& bytes) {
     {
         std::ofstream out(temporary,std::ios::binary|std::ios::trunc);
         if(!out || !out.write(reinterpret_cast<const char*>(bytes.data()),bytes.size()))
-            throw std::runtime_error("输出写入失败: "+temporary.string());
+            throw std::runtime_error("输出写入失败: "+temporary.u8string());
     }
     fs::rename(temporary,p);
 }

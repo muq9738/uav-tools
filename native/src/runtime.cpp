@@ -99,7 +99,7 @@ void configureRuntime(const fs::path& executable) {
     for(const auto& relative:runtime.at("plugins")) {
         auto plugin=base/relative.get<std::string>();
         if(!fs::is_regular_file(plugin) || registry->loadLibrary(plugin.u8string())==osgDB::Registry::NOT_LOADED)
-            throw std::runtime_error("无法加载随包 OSG 插件: "+plugin.string());
+            throw std::runtime_error("无法加载随包 OSG 插件: "+plugin.u8string());
     }
     for(const auto* extension:{"osgb","png","jpg"})
         if(!registry->getReaderWriterForExtension(extension)) throw std::runtime_error(std::string("缺少必需 OSG 读取器: ")+extension);
