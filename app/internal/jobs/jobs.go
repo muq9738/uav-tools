@@ -915,6 +915,12 @@ func normalize(spec Spec) (Spec, error) {
 	if entries, err := os.ReadDir(input); err == nil && len(entries) == 0 {
 		return Spec{}, errors.New("输入目录为空")
 	}
+	if input == output {
+		return Spec{}, errors.New("输出目录不能与输入目录相同")
+	}
+	if within(output, input) {
+		return Spec{}, errors.New("输出目录不能包含输入目录")
+	}
 	if stat, err := os.Stat(output); err == nil {
 		if !stat.IsDir() {
 			return Spec{}, errors.New("输出路径已存在且不是目录")
@@ -928,9 +934,6 @@ func normalize(spec Spec) (Spec, error) {
 		}
 	} else if !os.IsNotExist(err) {
 		return Spec{}, err
-	}
-	if within(input, output) || within(output, input) {
-		return Spec{}, errors.New("输出目录不能与输入目录互相包含")
 	}
 	if spec.Geometry == "" {
 		spec.Geometry = "meshopt"

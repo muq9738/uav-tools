@@ -302,14 +302,16 @@ func TestPickerEndpoint(t *testing.T) {
 	}
 }
 
-func TestListenRequiresTokenWhenExposed(t *testing.T) {
-	if _, err := Listen("0.0.0.0:0", ""); err == nil || !strings.Contains(err.Error(), "--token") {
-		t.Fatalf("对外监听应要求令牌：%v", err)
-	}
+func TestListenAllowsNonLoopbackWithoutToken(t *testing.T) {
 	if !IsLoopback("127.0.0.1:0") || !IsLoopback("localhost:8080") || IsLoopback("0.0.0.0:8080") || IsLoopback(":8080") {
 		t.Fatal("回环地址判断错误")
 	}
-	listener, err := Listen("127.0.0.1:0", "")
+	listener, err := Listen("0.0.0.0:0", "")
+	if err != nil {
+		t.Fatalf("非回环无令牌应允许监听：%v", err)
+	}
+	listener.Close()
+	listener, err = Listen("127.0.0.1:0", "")
 	if err != nil {
 		t.Fatal(err)
 	}

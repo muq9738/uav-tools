@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
@@ -47,8 +48,11 @@ func run() error {
 	flags := flag.NewFlagSet("osgb-tiles-app", flag.ContinueOnError)
 	headless := flags.Bool("headless", false, "只启动 HTTP 服务，不打开桌面窗口")
 	browser := flags.Bool("browser", false, "在默认浏览器打开界面；关闭终端或按 Ctrl+C 退出")
-	addr := flags.String("addr", "127.0.0.1:0", "HTTP 监听地址；非本机地址必须同时设置 --token")
-	token := flags.String("token", os.Getenv("OSGB_TILES_TOKEN"), "访问令牌；对外监听时必填")
+	addr := flags.String("addr", "127.0.0.1:0", "HTTP/HTTPS 监听地址（例如 0.0.0.0:42225）")
+	token := flags.String("token", os.Getenv("OSGB_TILES_TOKEN"), "可选访问令牌；留空则不启用鉴权")
+	useTLS := flags.Bool("tls", false, "启用内置 HTTPS（未指定证书时自动生成并持久化自签证书）")
+	tlsCert := flags.String("tls-cert", "", "HTTPS 证书 PEM 路径（与 --tls-key 配合使用）")
+	tlsKey := flags.String("tls-key", "", "HTTPS 私钥 PEM 路径（与 --tls-cert 配合使用）")
 	dataDir := flags.String("data-dir", "", "数据目录，保存任务索引与日志")
 	sidecar := flags.String("sidecar", "", "转换器路径；默认在本程序旁或 PATH 中查找 osgb-tiles")
 	maxParallel := flags.Int("max-parallel", 1, "同时运行的转换数")
@@ -129,6 +133,16 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	enableTLS := *useTLS || *tlsCert != "" || *tlsKey != ""
+	if enableTLS {
+		tlsConfig, certSource, err := api.LoadOrGenerateTLSConfig(*tlsCert, *tlsKey, *dataDir, *addr)
+		if err != nil {
+			listener.Close()
+			return err
+		}
+		log.Printf("已启用内置 HTTPS（证书：%s）", certSource)
+		listener = tls.NewListener(listener, tlsConfig)
+	}
 	httpServer := &http.Server{Handler: server.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		if err := httpServer.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -142,7 +156,7 @@ func run() error {
 		httpServer.Shutdown(shutdown)
 	}()
 
-	url := pageURL(listener.Addr(), *token)
+	url := pageURL(listener.Addr(), *token, enableTLS)
 	log.Printf("界面地址：%s", url)
 	if *browser {
 		var command *exec.Cmd
@@ -166,12 +180,16 @@ func run() error {
 	return desktop.RunWithPicker(ctx, desktop.Options{URL: url}, picker)
 }
 
-func pageURL(addr net.Addr, token string) string {
+func pageURL(addr net.Addr, token string, https bool) string {
 	host := "127.0.0.1"
 	if tcp, ok := addr.(*net.TCPAddr); ok && tcp.IP != nil && !tcp.IP.IsUnspecified() {
 		host = tcp.IP.String()
 	}
-	url := fmt.Sprintf("http://%s/", net.JoinHostPort(host, fmt.Sprint(addr.(*net.TCPAddr).Port)))
+	scheme := "http"
+	if https {
+		scheme = "https"
+	}
+	url := fmt.Sprintf("%s://%s/", scheme, net.JoinHostPort(host, fmt.Sprint(addr.(*net.TCPAddr).Port)))
 	if token != "" {
 		url += "?token=" + token
 	}

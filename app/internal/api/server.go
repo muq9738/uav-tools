@@ -76,15 +76,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/jobs/{id}/logs", s.handleLogs)
 	mux.HandleFunc("GET /api/jobs/{id}/events", s.handleEvents)
 	mux.HandleFunc("GET /api/jobs/{id}/tiles/{path...}", s.handleTileAsset)
+	mux.HandleFunc("POST /task/create", s.handleCompatCreateTask)
 	mux.Handle("GET /", s.staticHandler())
 	return s.authenticate(mux)
 }
 
 // authenticate 校验 API 的 Bearer 头或 token 查询参数（供 EventSource 使用）。
-// 静态界面资源不含用户数据，保持公开以便 Cesium 的 script、CSS 与 Worker 直接加载。
+// 仅在显式配置 Token 时生效；静态界面资源不含用户数据，保持公开以便 Cesium 的 script、CSS 与 Worker 直接加载。
 func (s *Server) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.options.Token != "" && strings.HasPrefix(r.URL.Path, "/api/") {
+		if s.options.Token != "" && (strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/task/")) {
 			presented := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 			if presented == "" {
 				presented = r.URL.Query().Get("token")
@@ -441,11 +442,8 @@ func IsLoopback(addr string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// Listen 在 addr 上启动监听；非本机地址必须设置令牌，避免无鉴权对外暴露。
-func Listen(addr, token string) (net.Listener, error) {
-	if !IsLoopback(addr) && token == "" {
-		return nil, fmt.Errorf("监听 %s 会向本机外暴露接口，必须设置 --token", addr)
-	}
+// Listen 在 addr 上启动监听。token 保留参数兼容，当前不强制非本机地址必须提供令牌。
+func Listen(addr, _ string) (net.Listener, error) {
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, err

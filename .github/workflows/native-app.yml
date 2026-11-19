@@ -100,16 +100,38 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build g++ python3 patchelf sqlite3 libsqlite3-dev libopenscenegraph-dev libpng-dev libxml2-dev libturbojpeg0-dev
           echo 'OSGB_SDK=/usr' >> "$GITHUB_ENV"
+      - name: Cache Windows SDK
+        id: vcpkg-cache
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: app/sdk/installed
+          key: windows-vcpkg-sdk-v1-${{ hashFiles('app/sdk/vcpkg.json', 'app/sdk/triplets/**') }}
       - name: Windows SDK
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          git clone https://github.com/microsoft/vcpkg app/sdk/toolchain
-          git -C app/sdk/toolchain checkout 84bab45d415d22042bd0b9081aea57f362da3f35
-          & app/sdk/toolchain/bootstrap-vcpkg.bat -disableMetrics
-          & app/sdk/toolchain/vcpkg.exe install --triplet x64-windows --x-manifest-root=app/sdk --x-install-root=app/sdk/installed
+          git init app/sdk/toolchain
+          git -C app/sdk/toolchain remote add origin https://github.com/microsoft/vcpkg.git
+          git -C app/sdk/toolchain fetch --depth 1 origin 84bab45d415d22042bd0b9081aea57f362da3f35
+          git -C app/sdk/toolchain checkout FETCH_HEAD
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          "OSGB_SDK=$((Resolve-Path app/sdk/installed/x64-windows).Path)" >> $env:GITHUB_ENV
+          if ('${{ steps.vcpkg-cache.outputs.cache-hit }}' -ne 'true') {
+            & app/sdk/toolchain/bootstrap-vcpkg.bat -disableMetrics
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $common = @('--triplet', 'x64-windows', '--overlay-triplets=app/sdk/triplets', '--x-install-root=app/sdk/installed', '--classic')
+            # 先安装图片与基础依赖，确保 OSG 配置阶段稳定发现 PNG 与 JPEG 并构建 osgdb_png/osgdb_jpeg。
+            & app/sdk/toolchain/vcpkg.exe install libpng libjpeg-turbo "libxml2[core]" "sqlite3[core,tool]" @common
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & app/sdk/toolchain/vcpkg.exe install "osg[core]" @common
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          $sdk = (Resolve-Path app/sdk/installed/x64-windows).Path
+          foreach ($plugin in @('osgdb_osg.dll', 'osgdb_serializers_osg.dll', 'osgdb_png.dll', 'osgdb_jpeg.dll')) {
+            $found = Get-ChildItem -Path $sdk -Recurse -Filter $plugin -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not $found) { throw "缺少必需的 OSG 插件: $plugin" }
+          }
+          "OSGB_SDK=$sdk" >> $env:GITHUB_ENV
       - name: Build and collect runtime
         shell: bash
         run: |

@@ -3,7 +3,7 @@
   "version-string": "0.1.0",
   "builtin-baseline": "84bab45d415d22042bd0b9081aea57f362da3f35",
   "dependencies": [
-    { "name": "osg", "default-features": false, "features": ["plugins"] },
+    { "name": "osg", "default-features": false },
     "libpng",
     "libjpeg-turbo",
     { "name": "libxml2", "default-features": false },

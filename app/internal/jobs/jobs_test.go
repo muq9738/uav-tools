@@ -97,6 +97,14 @@ func TestSubmitValidatesInputs(t *testing.T) {
 	}
 	defer manager.Close()
 
+	parent := t.TempDir()
+	nestedInput := filepath.Join(parent, "sub")
+	if err := os.MkdirAll(nestedInput, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nestedInput, "metadata.xml"), []byte("<ModelMetadata/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	cases := []struct {
 		name   string
 		spec   Spec
@@ -106,7 +114,8 @@ func TestSubmitValidatesInputs(t *testing.T) {
 		{"缺少输出", Spec{Input: input}, "缺少输出目录"},
 		{"输入不存在", Spec{Input: filepath.Join(t.TempDir(), "missing"), Output: filepath.Join(t.TempDir(), "out")}, "输入目录不可用"},
 		{"输出非空", Spec{Input: input, Output: filled}, "输出目录必须为空"},
-		{"输出包含在输入内", Spec{Input: input, Output: filepath.Join(input, "out")}, "不能与输入目录互相包含"},
+		{"输出与输入相同", Spec{Input: input, Output: input}, "不能与输入目录相同"},
+		{"输出包含输入", Spec{Input: nestedInput, Output: parent}, "不能包含输入目录"},
 		{"线程过多", Spec{Input: input, Output: filepath.Join(t.TempDir(), "out"), Threads: 100}, "线程数不能超过"},
 	}
 	for _, test := range cases {

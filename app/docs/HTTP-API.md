@@ -1,6 +1,6 @@
 # HTTP API
 
-默认 `127.0.0.1:8990`。显式设置 `--token` 时，接口支持 `Authorization: Bearer <token>` 或 `?token=…`；对外监听必须设置令牌。
+默认 `127.0.0.1:8990`。可选设置 `--token` 时，接口支持 `Authorization: Bearer <token>` 或 `?token=…`；留空则不启用鉴权。加 `--tls` 可启用内置 HTTPS（基于 Go 标准库 `crypto/tls`，自动生成并持久化自签证书到 `<data-dir>/tls/`，也可用 `--tls-cert` / `--tls-key` 指定外部证书）。
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
@@ -8,6 +8,7 @@
 | GET | `/api/config` | 数据目录、native 路径/能力/默认值、桌面能力 |
 | GET | `/api/doctor` | 数据目录写入与 native 能力检查 |
 | POST | `/api/jobs` | 创建任务 |
+| POST | `/task/create` | 兼容外部切片任务接口（`options.inputPath`/`outputPath`/`settings` → 201 Created） |
 | GET | `/api/jobs` | 任务列表 |
 | GET | `/api/jobs/{id}` | 任务详情与最终报告 |
 | POST | `/api/jobs/{id}/cancel` | 请求取消（含正在暂停和已暂停的任务） |

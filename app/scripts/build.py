@@ -716,6 +716,9 @@ def main():
             configure += [f'-DCMAKE_TOOLCHAIN_FILE={args.toolchain.resolve()}', '-DVCPKG_MANIFEST_MODE=OFF']
             if SYSTEM == 'windows':
                 configure += [f'-DVCPKG_TARGET_TRIPLET={"arm64" if ARCH == "arm64" else "x64"}-windows']
+                triplets = APP / 'sdk' / 'triplets'
+                if triplets.is_dir():
+                    configure += [f'-DVCPKG_OVERLAY_TRIPLETS={triplets.resolve()}']
         if args.proj_source:
             configure += [f'-DFETCHCONTENT_SOURCE_DIR_PROJ={args.proj_source.resolve()}']
         run(configure)
