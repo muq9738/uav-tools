@@ -1,4 +1,7 @@
 name: Native and App
+env:
+  PYTHONUTF8: '1'
+  PYTHONIOENCODING: utf-8
 on:
   push:
   pull_request:
@@ -148,7 +151,7 @@ jobs:
       - name: App and CLI parity in packaged environment
         shell: bash
         run: |
-          input=$(python -c "from pathlib import Path; print(next(Path('app/build').glob('*/test-data-*/texture+alpha.osgb')).resolve())")
+          input=$(python -c "from pathlib import Path; print(next(Path('app/build').glob('*/test-data-*/texture+alpha.osgb')).resolve(), end='')")
           python app/tests/verify_parity.py --package "app/dist/${{ matrix.platform }}/portable" --input "$input" --srs ENU:31.2,121.4,10 --evidence .agents-debug/ci/parity
       - name: Desktop package
         working-directory: app

@@ -12,6 +12,10 @@ import shutil
 import subprocess
 import sys
 
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, 'reconfigure'):
+        _stream.reconfigure(encoding='utf-8', errors='replace')
+
 APP = Path(__file__).resolve().parents[1]
 ROOT = APP.parent
 SYSTEM = {'Darwin': 'darwin', 'Linux': 'linux', 'Windows': 'windows'}[platform.system()]
@@ -80,10 +84,11 @@ def is_system(name, system=SYSTEM):
         'kernel32.dll', 'user32.dll', 'gdi32.dll', 'advapi32.dll', 'shell32.dll', 'ole32.dll',
         'oleaut32.dll', 'comdlg32.dll', 'comctl32.dll', 'ws2_32.dll', 'wsock32.dll', 'rpcrt4.dll',
         'ntdll.dll', 'secur32.dll', 'sspicli.dll', 'bcrypt.dll', 'crypt32.dll', 'cryptbase.dll',
-        'winmm.dll', 'version.dll', 'opengl32.dll', 'shlwapi.dll', 'ucrtbase.dll', 'normaliz.dll',
+        'winmm.dll', 'version.dll', 'opengl32.dll', 'glu32.dll', 'shlwapi.dll', 'ucrtbase.dll', 'normaliz.dll',
         'setupapi.dll', 'imm32.dll', 'dwmapi.dll', 'psapi.dll', 'dbghelp.dll', 'shcore.dll',
         'powrprof.dll', 'msimg32.dll', 'userenv.dll', 'iphlpapi.dll', 'dnsapi.dll', 'nsi.dll',
         'mswsock.dll', 'wtsapi32.dll', 'wintrust.dll', 'imagehlp.dll', 'cabinet.dll',
+        'msvcrt.dll', 'bcryptprimitives.dll', 'cfgmgr32.dll', 'uxtheme.dll',
     } or lowered.startswith(('api-ms-win-', 'ext-ms-win-'))
 
 
@@ -623,7 +628,7 @@ def stage(binary, sdk, build_dir, vc_dirs=()):
                 source = find_windows_dll(name, [original.parent, *search])
             if source is None or not source.is_file():
                 raise RuntimeError(f'无法解析 {original} -> {name}')
-            target = libdir / basename
+            target = libdir / (source.name if SYSTEM == 'windows' else basename)
             copy(source, target)
             links.setdefault(current, []).append((name, target))
 
@@ -654,8 +659,10 @@ def stage(binary, sdk, build_dir, vc_dirs=()):
         raise RuntimeError('包内插件加载前后 native 能力不一致')
 
     # 最终动态依赖审核；清除 SDK 环境后，非系统依赖只能来自包内。
+    # Windows 的 dumpbin 只静态解析 PE 导入表，不执行目标程序，保留默认环境避免 dumpbin 找不到自身 MSVC 辅助库。
+    audit_env = None if SYSTEM == 'windows' else runtime_env
     for current in pending:
-        for name in dependencies(current, env=runtime_env):
+        for name in dependencies(current, env=audit_env):
             if is_system(name):
                 continue
             if SYSTEM == 'darwin':

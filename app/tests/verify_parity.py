@@ -7,9 +7,14 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.request
+
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, 'reconfigure'):
+        _stream.reconfigure(encoding='utf-8', errors='replace')
 
 
 def verify(package, source, evidence, srs=None, origin=None, geometry='meshopt', texture_format='original', draco_speed=5, rebuild_top=False):
@@ -50,8 +55,7 @@ def verify(package, source, evidence, srs=None, origin=None, geometry='meshopt',
                 base = None
                 while time.monotonic() < deadline:
                     assert process.poll() is None, 'App 提前退出'
-                    log.seek(0)
-                    match = re.search(r'http://127\.0\.0\.1:\d+/', log.read())
+                    match = re.search(r'http://127\.0\.0\.1:\d+/', log_path.read_text(encoding='utf-8', errors='replace'))
                     if match:
                         base = match.group(0).rstrip('/')
                         break
@@ -91,8 +95,8 @@ def verify(package, source, evidence, srs=None, origin=None, geometry='meshopt',
                     return {str(p.relative_to(folder)): hashlib.sha256(p.read_bytes()).hexdigest() for p in folder.rglob('*') if p.is_file() and p.name != 'conversion-report.json'}
                 a, b = hashes(cli_out), hashes(app_out)
                 assert a == b, 'App / CLI 的主入口、GLB、纹理或诊断清单不同'
-                left = json.loads((cli_out / 'conversion-report.json').read_text())
-                right = json.loads((app_out / 'conversion-report.json').read_text())
+                left = json.loads((cli_out / 'conversion-report.json').read_text(encoding='utf-8'))
+                right = json.loads((app_out / 'conversion-report.json').read_text(encoding='utf-8'))
                 for key in ['elapsedSeconds', 'peakResidentBytes', 'memoryThrottled', 'checkpointDir']:
                     left.pop(key, None)
                     right.pop(key, None)

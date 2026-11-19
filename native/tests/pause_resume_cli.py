@@ -7,6 +7,10 @@ import subprocess
 import sys
 import tempfile
 
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 native, fixture = map(str, map(Path, sys.argv[1:3]))
 root = Path(tempfile.mkdtemp(prefix="checkpoint-cli-", dir=Path.cwd()))
 subprocess.run([fixture, "--fixture", str(root)], check=True, timeout=30)

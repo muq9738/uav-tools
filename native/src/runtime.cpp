@@ -93,11 +93,14 @@ void configureRuntime(const fs::path& executable) {
     if(runtime.at("protocolVersion")!=1) throw std::runtime_error("不支持的 native 运行时清单");
     auto base=actual.parent_path();auto registry=osgDB::Registry::instance();
     osgDB::FilePathList directories;
-    for(const auto& relative:runtime.at("pluginDirectories")) directories.push_back((base/relative.get<std::string>()).u8string());
+    for(const auto& relative:runtime.at("pluginDirectories")) {
+        auto dir=(base/fs::u8path(relative.get<std::string>())).lexically_normal().make_preferred();
+        directories.push_back(dir.u8string());
+    }
     registry->setLibraryFilePathList(directories);
     // 主动加载随包插件；不让开发机插件把缺失资源掩盖成可用。
     for(const auto& relative:runtime.at("plugins")) {
-        auto plugin=base/relative.get<std::string>();
+        auto plugin=(base/fs::u8path(relative.get<std::string>())).lexically_normal().make_preferred();
         if(!fs::is_regular_file(plugin) || registry->loadLibrary(plugin.u8string())==osgDB::Registry::NOT_LOADED)
             throw std::runtime_error("无法加载随包 OSG 插件: "+plugin.u8string());
     }

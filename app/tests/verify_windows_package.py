@@ -6,7 +6,12 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
+
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, 'reconfigure'):
+        _stream.reconfigure(encoding='utf-8', errors='replace')
 
 
 def verify(package):
@@ -43,7 +48,9 @@ def verify(package):
         command = subprocess.list2cmdline([str(installers[0]), '/S']) + ' /D=' + str(installed)
         subprocess.run(command, check=True, timeout=120)
         check(installed)
-        subprocess.run([str(installed / 'Uninstall.exe'), '/S'], check=True, timeout=60)
+        # NSIS 的 _?= 必须位于最后且不加引号，确保卸载器同步执行完毕再退出，避免与临时目录清理竞态。
+        uninstall_cmd = subprocess.list2cmdline([str(installed / 'Uninstall.exe'), '/S']) + ' _?=' + str(installed)
+        subprocess.run(uninstall_cmd, check=True, timeout=60)
     print('Windows 完整便携目录、可选个人安装及卸载检查通过；未验证交互式桌面画面或企业权限策略')
 
 
