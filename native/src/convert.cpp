@@ -22,6 +22,7 @@
 #include <future>
 #include <map>
 #include <mutex>
+#include <queue>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -37,7 +38,6 @@
 #endif
 
 namespace nt {
-namespace {
 // 仅用于内存预算门控与报告；采样失败返回 0，不能把 0 当成真实占用。
 std::uint64_t residentBytes() {
 #ifdef __APPLE__
@@ -56,6 +56,7 @@ std::uint64_t residentBytes() {
     return 0;
 #endif
 }
+namespace {
 // 峰值只在调度点采样会错过任务中峰值；后台按固定间隔取最大值，报告值不依赖采样时机。
 class ResidentSampler {
     std::atomic<bool> stop_{false};
@@ -580,7 +581,7 @@ Json convert(const Options& requested) {
         Json identity={{"input",options.input.u8string()},{"output",options.output.u8string()},
             {"entrypoints",entries},{"inputs",inputs},{"converter",checkpointConverterIdentity()},
             {"effectiveOptions",{{"srs",options.srs},{"origin",origin},{"preserveEncoded",options.preserveEncoded},
-                {"compressGeometry",options.compressGeometry},{"dracoGeometry",options.dracoGeometry},{"dracoSpeed",options.dracoSpeed},{"textureFormat",options.textureFormat},{"threads",options.threads},{"quantizeGeometry",options.quantizeGeometry},{"splitPagedLod",options.splitPagedLod},{"rebuildTop",options.rebuildTop},{"topSealDistance",options.topSealDistance},{"topAlgorithm","ancestor-rebuild-v1"},{"preview",options.preview},{"previewAlgorithm","mesh-preview-v1"},{"previewTriangleBudget",100000},{"previewAtlasPageLimit",4096},{"memoryBudgetBytes",options.memoryBudgetBytes}}}};
+                {"compressGeometry",options.compressGeometry},{"dracoGeometry",options.dracoGeometry},{"dracoSpeed",options.dracoSpeed},{"textureFormat",options.textureFormat},{"threads",options.threads},{"quantizeGeometry",options.quantizeGeometry},{"splitPagedLod",options.splitPagedLod},{"rebuildTop",options.rebuildTop},{"topSealDistance",options.topSealDistance},{"topAlgorithm","ancestor-rebuild-v1"},{"preview",options.preview},{"previewAlgorithm","mesh-preview-v2"},{"memoryBudgetBytes",options.memoryBudgetBytes}}}};
         checkpoint=std::make_unique<Checkpoint>(options.checkpointDir,identity,options.resume);
         resume=std::make_unique<ResumeState>(*checkpoint,options,inputs);processed=checkpoint->filesCompleted();
         if(options.checkCancelled) options.checkCancelled();
@@ -661,32 +662,8 @@ Json convert(const Options& requested) {
         }
     };
     relocateUris(relocateUris,root);
-    std::vector<PreviewSource> previewSources;
-    if(options.preview) {
-        std::map<std::string,std::pair<const Json*,const Json*>> sourceByContent;
-        for(const auto& row:records) for(const auto& content:row.at("content")) sourceByContent[content.at("uri").get<std::string>()]={&row,&content};
-        auto addSource=[&](const Json& tile)->void {
-            const auto uri=tile.at("content").at("uri").get<std::string>();auto found=sourceByContent.find(uri);
-            if(found==sourceByContent.end()) throw std::runtime_error("预览显示前沿缺少源记录: "+uri);
-            const auto& row=*found->second.first;const auto& content=*found->second.second;
-            auto matrix=row.at("sourceTransform").get<std::vector<double>>();if(matrix.size()!=16) throw std::runtime_error("预览源矩阵无效");
-            auto box=tile.at("boundingVolume").at("box").get<std::vector<double>>();if(box.size()!=12) throw std::runtime_error("预览源包围盒无效");
-            osg::BoundingBoxd sourceBounds;for(int x:{-1,1}) for(int y:{-1,1}) for(int z:{-1,1}) sourceBounds.expandBy(osg::Vec3d(
-                box[0]+x*box[3]+y*box[6]+z*box[9],box[1]+x*box[4]+y*box[7]+z*box[10],box[2]+x*box[5]+y*box[8]+z*box[11]));
-            previewSources.push_back({fs::u8path(row.at("source").get<std::string>()),osg::Matrixd(matrix.data()),sourceBounds,content.at("triangles").get<std::uint64_t>()});
-            if(resume) resume->checkSource(previewSources.back().file);
-        };
-        // REPLACE 细化下子节点会替换父内容；预览取最深的有效显示前沿（叶子 LOD），
-        // 而不是根部的粗糙常驻层，并避免把同一条 LOD 链的每一层重复合并。
-        auto frontier=[&](auto&& self,const Json& tile)->bool {
-            bool childContent=false;
-            if(tile.contains("children")) for(const auto& child:tile["children"]) childContent=self(self,child)||childContent;
-            if(childContent) return true;
-            if(tile.contains("content")) {addSource(tile);return true;}
-            return false;
-        };
-        for(const auto& child:root["children"]) frontier(frontier,child);
-    }
+    Json previewSourceRoot;
+    if(options.preview) previewSourceRoot=root;
     Json topAudit=Json::array();
     if(options.rebuildTop) {
         emit({{"type","progress"},{"stage","rebuild-top"},{"done",0},{"total",0},{"unit","ancestors"}});
@@ -739,16 +716,18 @@ Json convert(const Options& requested) {
     }
     Json previewReport;
     if(options.preview) {
-        emit({{"type","progress"},{"stage","preview"},{"done",0},{"total",previewSources.size()},{"unit","files"}});
         auto previewOptions=options;previewOptions.output=previewStaging;previewOptions.event=emit;
+        previewOptions.threads=std::min(requestedThreads,std::max(1U,std::thread::hardware_concurrency()));
         previewOptions.checkCancelled=[&] {if(options.checkCancelled) options.checkCancelled();if(resume) resume->check();};
-        previewReport=buildPreview(previewSources,previewOptions,spatial.projected()?&spatial:nullptr,placement);
+        auto checkSource=[&](const fs::path& file) {if(resume) resume->checkSource(file);};
+        previewReport=buildPreview(previewSourceRoot,records,previewOptions,spatial.projected()?&spatial:nullptr,placement,checkSource);
         if(fs::exists(options.output/"preview")) throw std::runtime_error("预览暂存资产与已有目录冲突");
         for(const auto& item:fs::recursive_directory_iterator(previewStaging)) if(item.is_regular_file()) {
             auto relative=item.path().lexically_relative(previewStaging);derivedAssets[(fs::path("preview")/relative).generic_u8string()]=fileIdentity(item.path());
         }
         fs::rename(previewStaging,options.output/"preview");
-        emit({{"type","progress"},{"stage","preview"},{"done",previewSources.size()},{"total",previewSources.size()},{"unit","files"}});
+        auto previewGlbs=previewReport.at("glbs").get<std::uint64_t>();
+        emit({{"type","progress"},{"stage","preview"},{"done",previewGlbs},{"total",previewGlbs},{"unit","files"}});
     }
     std::uint64_t glbs=0,vertices=0,triangles=0,imageCount=0,originals=0;std::set<std::string> files,textureFiles,contentsSeen;
     std::uint64_t geometryOriginalFloatBytes=0;double quantizationErrorMeters=0;
@@ -810,10 +789,10 @@ Json convert(const Options& requested) {
         {"topGlbs",topAudit.size()},{"topLossy",options.rebuildTop && !topAudit.empty()},
         {"memoryThrottled",throttled},{"memoryResidentSampled",initialResident>0},{"records",records}};
     if(options.preview) report["preview"]={
-        {"status","complete"},{"entry","preview/tileset.json"},{"algorithm","mesh-preview-v1"},
-        {"triangles",previewReport.at("triangles")},{"glbs",previewReport.at("glbs")},
-        {"sourceTriangles",previewReport.at("inputTriangles")},
-        {"geometryEncoding","EXT_meshopt_compression"},{"textureFormat","uastc"}};
+        {"status","complete"},{"entry","preview/tileset.json"},{"algorithm","mesh-preview-v2"},
+        {"streamingLod",true},{"triangles",previewReport.at("triangles")},{"glbs",previewReport.at("glbs")},
+        {"overviewTriangles",previewReport.at("overviewTriangles")},
+        {"geometryEncoding","EXT_meshopt_compression+KHR_mesh_quantization"},{"textureFormat","original"}};
     if(checkpoint) {
         report["checkpointDir"]=checkpoint->directory().u8string();report["filesCompleted"]=checkpoint->filesCompleted();
         report["filesReused"]=resume->reused.size();

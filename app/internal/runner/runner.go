@@ -311,8 +311,9 @@ func (e *Exec) Convert(ctx context.Context, spec jobs.Spec, control jobs.Control
 			GeometryEncoding string `json:"geometryEncoding"`
 			TextureFormat    string `json:"textureFormat"`
 		}
-		if json.Unmarshal(report.Preview, &preview) != nil || preview.Status != "complete" || preview.Entry != "preview/tileset.json" || preview.Algorithm != "mesh-preview-v1" || preview.GeometryEncoding != "EXT_meshopt_compression" || preview.TextureFormat != "uastc" {
-			return result, errors.New("native 轻量预览报告缺失或与预览契约不一致，拒绝标记成功")
+		if json.Unmarshal(report.Preview, &preview) != nil || preview.Status != "complete" || preview.Entry != "preview/tileset.json" || preview.Algorithm != "mesh-preview-v2" || preview.GeometryEncoding != "EXT_meshopt_compression+KHR_mesh_quantization" || preview.TextureFormat != "original" {
+			return result, fmt.Errorf("native 轻量预览报告缺失或与预览契约不一致，拒绝标记成功（actual: status=%q entry=%q algorithm=%q geometry=%q texture=%q）",
+				preview.Status, preview.Entry, preview.Algorithm, preview.GeometryEncoding, preview.TextureFormat)
 		}
 		if err := validatePreviewOutputs(spec.Output); err != nil {
 			return result, err

@@ -24,7 +24,11 @@ struct EncodedImage : osg::Referenced {
 };
 void installImageCapture();
 void uninstallImageCapture();
+unsigned validateImageForEncoding(const osg::Image& image);
+void copyImageRgba8(const osg::Image& image, unsigned char* destination, std::size_t rowStrideBytes=0);
 osg::ref_ptr<EncodedImage> encodeImage(const osg::Image& image);
+osg::ref_ptr<EncodedImage> encodePreviewResizedImage(const osg::Image& image, unsigned maxDimension, unsigned jpegQuality=80);
+std::uint64_t residentBytes();
 std::string contentKey(const Bytes& bytes);
 Bytes readBytes(const fs::path& file);
 void atomicWrite(const fs::path& file, const Bytes& bytes);
@@ -84,6 +88,9 @@ struct Options {
     bool preview=false;
     // 仅供 preview.cpp 的 GLB 写出副本设置；主产物即使开启 preview 也不读取它。
     bool previewEncoding=false;
+    // 仅供 preview.cpp 非叶子瓦片限制远中景内嵌纹理最大边长（0 表示保持原始分辨率，叶子层恒为 0）。
+    unsigned previewMaxTextureSize=0;
+    unsigned previewJpegQuality=80;
     // 新增有损远景祖先层；原始源内容全部保留。
     bool rebuildTop=false;
     // Boundary weld tolerance for rebuilt ancestors, in metres. 0 disables

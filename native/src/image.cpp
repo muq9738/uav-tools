@@ -1,11 +1,15 @@
 #include "native_tiles.hpp"
+#include "codecs.hpp"
 #include "compressed_image.hpp"
 #include <osgDB/FileNameUtils>
 #include <osgDB/FileUtils>
 #include <osgDB/Registry>
 #include <osgDB/ReaderWriter>
 #include <png.h>
+#include <algorithm>
 #include <atomic>
+#include <cmath>
+#include <cstring>
 #include <fstream>
 #include <iomanip>
 #include <iterator>
@@ -149,7 +153,7 @@ experimental::BcImage experimental::decodeOsgBcCandidate(const osg::Image& im,st
         std::vector<std::size_t>(offsets.begin(),offsets.end()),
         im.getOrigin()==osg::Image::TOP_LEFT?ImageOrigin::TopLeft:ImageOrigin::BottomLeft);
 }
-osg::ref_ptr<EncodedImage> encodeImage(const osg::Image& im) {
+unsigned validateImageForEncoding(const osg::Image& im) {
     if(im.s()<=0 || im.t()<=0 || im.r()!=1 || !im.data())
         throw std::runtime_error("纹理为空或不是二维图片: "+im.getFileName());
     if(im.isMipmap())
@@ -166,18 +170,38 @@ osg::ref_ptr<EncodedImage> encodeImage(const osg::Image& im) {
     if(format==GL_LUMINANCE || format==GL_ALPHA) channels=1;
     if(format==GL_LUMINANCE_ALPHA) channels=2;
     if(!channels) throw std::runtime_error("未知纹理通道: "+std::to_string(format));
-    Bytes pixels(static_cast<std::size_t>(im.s())*im.t()*4);
-    for(int y=0;y<im.t();++y) for(int x=0;x<im.s();++x) {
-        auto source=im.data(x,y);auto target=&pixels[(static_cast<std::size_t>(y)*im.s()+x)*4];
-        if(channels>=3) {
-            bool bgr=format==GL_BGR || format==GL_BGRA;
-            target[0]=source[bgr?2:0];target[1]=source[1];target[2]=source[bgr?0:2];
-            target[3]=channels==4?source[3]:255;
-        } else {
-            target[0]=target[1]=target[2]=format==GL_ALPHA?255:source[0];
-            target[3]=format==GL_ALPHA?source[0]:(channels==2?source[1]:255);
+    return channels;
+}
+void copyImageRgba8(const osg::Image& im, unsigned char* destination, std::size_t rowStrideBytes) {
+    unsigned channels=validateImageForEncoding(im);
+    const auto format=im.getPixelFormat();
+    const std::size_t width=static_cast<std::size_t>(im.s());
+    const std::size_t stride=rowStrideBytes?rowStrideBytes:width*4;
+    const bool bgr=format==GL_BGR || format==GL_BGRA;
+    for(int y=0;y<im.t();++y) {
+        const unsigned char* sourceRow=im.data(0,y);
+        unsigned char* targetRow=destination+static_cast<std::size_t>(y)*stride;
+        if(format==GL_RGBA) {
+            std::memcpy(targetRow,sourceRow,width*4);
+            continue;
+        }
+        for(std::size_t x=0;x<width;++x) {
+            const unsigned char* source=sourceRow+x*channels;
+            unsigned char* target=targetRow+x*4;
+            if(channels>=3) {
+                target[0]=source[bgr?2:0];target[1]=source[1];target[2]=source[bgr?0:2];
+                target[3]=channels==4?source[3]:255;
+            } else {
+                target[0]=target[1]=target[2]=format==GL_ALPHA?255:source[0];
+                target[3]=format==GL_ALPHA?source[0]:(channels==2?source[1]:255);
+            }
         }
     }
+}
+osg::ref_ptr<EncodedImage> encodeImage(const osg::Image& im) {
+    validateImageForEncoding(im);
+    Bytes pixels(static_cast<std::size_t>(im.s())*im.t()*4);
+    copyImageRgba8(im,pixels.data(),static_cast<std::size_t>(im.s())*4);
     png_image image{};image.version=PNG_IMAGE_VERSION;image.width=im.s();image.height=im.t();image.format=PNG_FORMAT_RGBA;
     png_alloc_size_t length=0;
     if(!png_image_write_to_memory(&image,nullptr,&length,0,pixels.data(),0,nullptr))
@@ -188,5 +212,58 @@ osg::ref_ptr<EncodedImage> encodeImage(const osg::Image& im) {
         throw std::runtime_error("PNG 编码失败: "+std::string(image.message));
     }
     result->bytes.resize(length);return result;
+}
+osg::ref_ptr<EncodedImage> encodePreviewResizedImage(const osg::Image& im, unsigned maxDimension, unsigned jpegQuality) {
+    validateImageForEncoding(im);
+    const unsigned srcW=static_cast<unsigned>(im.s());
+    const unsigned srcH=static_cast<unsigned>(im.t());
+    if(!maxDimension || (srcW<=maxDimension && srcH<=maxDimension)) return nullptr;
+    unsigned dstW=srcW, dstH=srcH;
+    if(srcW>=srcH) {
+        dstW=maxDimension;
+        dstH=std::max(1U,static_cast<unsigned>(std::lround(double(srcH)*double(maxDimension)/double(srcW))));
+    } else {
+        dstH=maxDimension;
+        dstW=std::max(1U,static_cast<unsigned>(std::lround(double(srcW)*double(maxDimension)/double(srcH))));
+    }
+    auto resized=resampleRgbaImage(im,dstW,dstH,true);
+    bool opaque=true;
+    for(unsigned y=0;y<dstH && opaque;++y) {
+        const unsigned char* row=resized->data(0,static_cast<int>(y));
+        for(unsigned x=0;x<dstW;++x) if(row[x*4+3]<255) {opaque=false;break;}
+    }
+    if(!opaque) return encodeImage(*resized);
+    // 尝试用系统已内置的 OSG JPEG 插件编码（macOS ImageIO / Windows osgdb_jpeg），
+    // 不引入新三方库；若插件不可用则回退 PNG。
+    auto* rw=osgDB::Registry::instance()->getReaderWriterForExtension("jpg");
+    if(rw) {
+        osg::ref_ptr<osg::Image> rgb=new osg::Image;
+        rgb->allocateImage(static_cast<int>(dstW),static_cast<int>(dstH),1,GL_RGB,GL_UNSIGNED_BYTE,1);
+        rgb->setOrigin(osg::Image::BOTTOM_LEFT);
+        for(unsigned y=0;y<dstH;++y) {
+            const unsigned char* src=resized->data(0,static_cast<int>(y));
+            unsigned char* dst=rgb->data(0,static_cast<int>(y));
+            for(unsigned x=0;x<dstW;++x) {
+                dst[x*3+0]=src[x*4+0];
+                dst[x*3+1]=src[x*4+1];
+                dst[x*3+2]=src[x*4+2];
+            }
+        }
+        std::ostringstream out(std::ios::binary);
+        osg::ref_ptr<osgDB::Options> opts=new osgDB::Options("JPEG_QUALITY "+std::to_string(std::clamp(jpegQuality,40U,95U)));
+        auto status=rw->writeImage(*rgb,out,opts.get());
+        if(status.success()) {
+            const std::string data=out.str();
+            if(data.size()>3 && static_cast<unsigned char>(data[0])==0xFF && static_cast<unsigned char>(data[1])==0xD8 && static_cast<unsigned char>(data[2])==0xFF) {
+                auto result=new EncodedImage;
+                result->bytes.assign(reinterpret_cast<const unsigned char*>(data.data()),
+                                     reinterpret_cast<const unsigned char*>(data.data())+data.size());
+                result->mime="image/jpeg";
+                result->flipV=true;
+                return result;
+            }
+        }
+    }
+    return encodeImage(*resized);
 }
 }

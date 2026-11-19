@@ -177,7 +177,8 @@ void collectExtensions(const Json& value, std::set<std::string>& names) {
 
 void checkImageFile(const fs::path& file, const std::string& mime, const fs::path& document,
                     const std::string& label, ValidationContext& context) {
-    if(context.preview && mime!="image/ktx2") fail(document,label+" 预览纹理必须是 KTX2");
+    if(mime != "image/png" && mime != "image/jpeg" && mime != "image/ktx2")
+        fail(document, label + " 不支持的纹理 mimeType: " + mime);
     std::error_code error;
     auto canonical = fs::canonical(file, error);
     if(error) fail(document, label + " 图片无法解析: " + file.u8string());
@@ -279,6 +280,12 @@ void validateGltfDocument(const Json& document, const fs::path& file, std::uint6
     const auto& views = arrayMember(document, "bufferViews", file, "bufferViews");
     if(views.empty()) fail(file, "bufferViews 为空");
     std::uint64_t compressedViews = 0;
+    Bytes previewGlbBytes;
+    std::size_t previewBinOffset = 0;
+    if(context.preview) {
+        previewGlbBytes = readBytes(file);
+        previewBinOffset = 28 + readU32(previewGlbBytes.data() + 12);
+    }
     for(const auto& view : views) {
         if(!view.is_object()) fail(file, "bufferViews[] 不是对象");
         auto bufferIndex = integerValue(member(view, "buffer", file, "bufferView.buffer"), file, "bufferView.buffer");
@@ -325,9 +332,8 @@ void validateGltfDocument(const Json& document, const fs::path& file, std::uint6
             if(filter != "NONE") fail(file, "压缩视图 filter 必须是 NONE: " + filter);
             ++compressedViews;
             if(context.preview) {
-                auto bytes=readBytes(file);auto jsonLength=readU32(bytes.data()+12);std::size_t bin=28+jsonLength;
-                if(!rangeWithin(bin+physicalOffset,physicalLength,bytes.size())) fail(file,"预览 Meshopt 物理数据超出 BIN");
-                Bytes encoded(bytes.begin()+bin+physicalOffset,bytes.begin()+bin+physicalOffset+physicalLength);
+                if(!rangeWithin(previewBinOffset+physicalOffset,physicalLength,previewGlbBytes.size())) fail(file,"预览 Meshopt 物理数据超出 BIN");
+                Bytes encoded(previewGlbBytes.begin()+previewBinOffset+physicalOffset,previewGlbBytes.begin()+previewBinOffset+physicalOffset+physicalLength);
                 try {
                     auto decoded=decodeMeshopt(encoded,count,stride,mode!="ATTRIBUTES");
                     if(decoded.size()!=length) fail(file,"预览 Meshopt 解码长度与虚拟视图不一致");
@@ -407,8 +413,9 @@ void validateGltfDocument(const Json& document, const fs::path& file, std::uint6
     const bool meshQuantization = std::find(requiredExtensions.begin(), requiredExtensions.end(), "KHR_mesh_quantization") != requiredExtensions.end();
     if(context.preview) {
         if(std::find(requiredExtensions.begin(),requiredExtensions.end(),"EXT_meshopt_compression")==requiredExtensions.end()) fail(file,"预览必须实际使用 EXT_meshopt_compression");
+        if(!meshQuantization) fail(file,"预览必须实际使用 KHR_mesh_quantization");
         if(std::find(requiredExtensions.begin(),requiredExtensions.end(),"KHR_materials_unlit")==requiredExtensions.end()) fail(file,"预览材质必须声明 KHR_materials_unlit");
-        if(meshQuantization || std::find(requiredExtensions.begin(),requiredExtensions.end(),"KHR_draco_mesh_compression")!=requiredExtensions.end()) fail(file,"预览不允许 U16 量化或 Draco");
+        if(std::find(requiredExtensions.begin(),requiredExtensions.end(),"KHR_draco_mesh_compression")!=requiredExtensions.end()) fail(file,"预览不允许使用 Draco");
     }
     const auto normalizedQuantized = [meshQuantization](const Json& accessor) {
         return meshQuantization && accessor.value("normalized", false);
@@ -442,8 +449,8 @@ void validateGltfDocument(const Json& document, const fs::path& file, std::uint6
                 auto type = stringMember(accessor, "type", file, "accessor.type");
                 auto componentType = integerValue(member(accessor, "componentType", file, "accessor.componentType"),
                                                   file, "accessor.componentType");
-                if(context.preview && (attribute.key()=="POSITION" || attribute.key()=="TEXCOORD_0") && componentType!=5126)
-                    fail(file,"预览 POSITION/TEXCOORD_0 必须保留 FLOAT");
+                if(context.preview && attribute.key()=="POSITION" && !(componentType==5123 && normalizedQuantized(accessor)))
+                    fail(file,"预览 POSITION 必须为 KHR_mesh_quantization 归一化 USHORT");
                 if(attribute.key() == "POSITION") {
                     if(type != "VEC3" || (componentType != 5126 && !(componentType == 5123 && normalizedQuantized(accessor))))
                         fail(file, "POSITION 必须是 VEC3/FLOAT 或声明 KHR_mesh_quantization 的归一化 USHORT");
@@ -509,10 +516,13 @@ void validateGltfDocument(const Json& document, const fs::path& file, std::uint6
                     const auto& accessor=accessors[attributes.at(name).get<std::size_t>()];if(!accessor.contains("bufferView")) continue;
                     auto found=context.decodedViews.find(accessor.at("bufferView").get<unsigned>());if(found==context.decodedViews.end()) fail(file,"预览属性缺少 Meshopt 解码视图");
                     auto components=componentCount(accessor.at("type").get<std::string>());auto count=accessor.at("count").get<std::uint64_t>();auto view=views[accessor.at("bufferView").get<std::size_t>()];
-                    auto stride=view.value("byteStride",components*4ULL);auto offset=accessor.value("byteOffset",0ULL);
+                    auto ctype=accessor.at("componentType").get<std::uint64_t>();auto csize=componentSize(ctype);
+                    auto stride=view.value("byteStride",components*csize);auto offset=accessor.value("byteOffset",0ULL);
                     for(std::uint64_t i=0;i<count*components;++i) {
-                        auto at=offset+(i/components)*stride+(i%components)*4;if(!rangeWithin(at,4,found->second.size())) fail(file,"预览解码属性越界");
-                        auto value=readU32(found->second.data()+at);float number=0;std::memcpy(&number,&value,4);if(!std::isfinite(number)) fail(file,"预览解码属性包含非有限值");
+                        auto at=offset+(i/components)*stride+(i%components)*csize;if(!rangeWithin(at,csize,found->second.size())) fail(file,"预览解码属性越界");
+                        if(ctype==5126) {
+                            auto value=readU32(found->second.data()+at);float number=0;std::memcpy(&number,&value,4);if(!std::isfinite(number)) fail(file,"预览解码属性包含非有限值");
+                        }
                     }
                 }
             }
@@ -552,9 +562,41 @@ void validateGltfDocument(const Json& document, const fs::path& file, std::uint6
             auto mime = stringMember(image, "mimeType", file, "image.mimeType");
             if(mime != "image/png" && mime != "image/jpeg" && mime!="image/ktx2")
                 fail(file, "image.mimeType 不受支持: " + mime);
-            auto uri = stringMember(image, "uri", file, "image.uri");
-            auto imageFile = resolveLocalUri(context, uri, file.parent_path(), file, "image.uri");
-            checkImageFile(imageFile, mime, file, "image.uri", context);
+            if(image.contains("bufferView")) {
+                if(image.contains("uri")) fail(file, "image 不能同时包含 uri 和 bufferView");
+                auto viewIndex = integerValue(image.at("bufferView"), file, "image.bufferView");
+                if(viewIndex >= static_cast<std::uint64_t>(views.size()))
+                    fail(file, "image.bufferView 索引越界");
+                const auto& view = views[static_cast<std::size_t>(viewIndex)];
+                if(view.contains("extensions") && view.at("extensions").contains("EXT_meshopt_compression"))
+                    fail(file, "内嵌纹理 bufferView 不能使用 EXT_meshopt_compression");
+                auto offset = view.contains("byteOffset")
+                                  ? integerValue(view.at("byteOffset"), file, "bufferView.byteOffset") : 0;
+                auto length = integerValue(member(view, "byteLength", file, "bufferView.byteLength"),
+                                           file, "bufferView.byteLength");
+                if(previewGlbBytes.empty()) {
+                    previewGlbBytes = readBytes(file);
+                    previewBinOffset = 28 + readU32(previewGlbBytes.data() + 12);
+                }
+                if(!rangeWithin(previewBinOffset + offset, length, previewGlbBytes.size()))
+                    fail(file, "内嵌纹理数据超出 BIN chunk");
+                const unsigned char* header = previewGlbBytes.data() + previewBinOffset + offset;
+                bool png = length >= 8 && header[0] == 0x89 && header[1] == 0x50 && header[2] == 0x4e &&
+                           header[3] == 0x47 && header[4] == 0x0d && header[5] == 0x0a && header[6] == 0x1a && header[7] == 0x0a;
+                bool jpeg = length >= 3 && header[0] == 0xff && header[1] == 0xd8 && header[2] == 0xff;
+                if((mime == "image/png" && !png) || (mime == "image/jpeg" && !jpeg))
+                    fail(file, "内嵌图片签名与 mimeType 不一致");
+                if(mime == "image/ktx2") {
+                    try { inspectBasis(Bytes(header, header + length), true); }
+                    catch(const std::exception& error) { fail(file, std::string("内嵌 KTX2 校验失败: ") + error.what()); }
+                }
+                context.stats.images++;
+            } else {
+                if(context.preview) fail(file, "预览纹理必须内嵌在 GLB bufferView 中");
+                auto uri = stringMember(image, "uri", file, "image.uri");
+                auto imageFile = resolveLocalUri(context, uri, file.parent_path(), file, "image.uri");
+                checkImageFile(imageFile, mime, file, "image.uri", context);
+            }
         }
     }
     std::size_t textureTotal = 0;
@@ -731,16 +773,16 @@ OutputValidationStats validateStagedOutput(const fs::path& staging) {
         const auto& summary=objectMember(report,"preview",reportPath,"preview");
         if(stringMember(summary,"status",reportPath,"preview.status")!="complete" ||
            stringMember(summary,"entry",reportPath,"preview.entry")!="preview/tileset.json" ||
-           stringMember(summary,"algorithm",reportPath,"preview.algorithm")!="mesh-preview-v1" ||
-           stringMember(summary,"geometryEncoding",reportPath,"preview.geometryEncoding")!="EXT_meshopt_compression" ||
-           stringMember(summary,"textureFormat",reportPath,"preview.textureFormat")!="uastc") fail(reportPath,"预览摘要与 mesh-preview-v1 契约不一致");
+           stringMember(summary,"algorithm",reportPath,"preview.algorithm")!="mesh-preview-v2" ||
+           stringMember(summary,"geometryEncoding",reportPath,"preview.geometryEncoding")!="EXT_meshopt_compression+KHR_mesh_quantization" ||
+           stringMember(summary,"textureFormat",reportPath,"preview.textureFormat")!="original") fail(reportPath,"预览摘要与 mesh-preview-v2 契约不一致");
         ValidationContext preview;preview.preview=true;preview.stagingRoot=context.stagingRoot;
         validateManifestFile(preview.stagingRoot/"preview/tileset.json",preview,"轻量预览入口");
         auto previewReportPath=preview.stagingRoot/"preview/preview-report.json";
         if(!fs::is_regular_file(previewReportPath,error)) fail(previewReportPath,"缺少轻量预览详细报告");
         auto previewReport=parseJsonFile(previewReportPath,"轻量预览详细报告");
         if(stringMember(previewReport,"status",previewReportPath,"preview-report.status")!="complete" ||
-           stringMember(previewReport,"algorithm",previewReportPath,"preview-report.algorithm")!="mesh-preview-v1") fail(previewReportPath,"轻量预览详细报告状态或算法不匹配");
+           stringMember(previewReport,"algorithm",previewReportPath,"preview-report.algorithm")!="mesh-preview-v2") fail(previewReportPath,"轻量预览详细报告状态或算法不匹配");
         if(integerValue(member(summary,"triangles",reportPath,"preview.triangles"),reportPath,"preview.triangles")!=
            integerValue(member(previewReport,"triangles",previewReportPath,"preview-report.triangles"),previewReportPath,"preview-report.triangles")) fail(reportPath,"主报告与预览报告的三角形数不一致");
         context.stats.tilesets+=preview.stats.tilesets;context.stats.tiles+=preview.stats.tiles;

@@ -88,18 +88,18 @@ KTX2-UASTC、KTX2-ETC1S）均为显式选项且默认关闭，详见下文「可
 四项参数均进入检查点身份与 App 能力协商，默认关闭；开启后报告中 `sourceExact` 为 false，
 原始内容是否逐字节保留由单独的 `sourceContentsExact` 表达。
 
-**轻量预览（`--preview`）**：与主产物相互独立，主产物的保真结论、编码和误差不变。显示前沿
-逐内容读取源网格，按输入面数预算（默认 10 万）分配目标；大场景按空间中心轴切分为浅层空间块
-（最多 32 块），不复制原 OSGB 的深层 LOD。每块只在处理时驻留该源文件网格，简化后立即释放，
-再进入图集与 GLB 写出。几何使用受材质与 UV 接缝约束的 QEM（拒绝翻面、保持边界与颜色分区），
-写出 Meshopt、FLOAT 位置/UV、无 NORMAL、`KHR_materials_unlit`；纹理按内容去重、按使用方式
-图集化（单页上限 4096，放不下增加页），重复/镜像或越界 UV 保留独立采样页以免串色，并使用
-高质量 UASTC（very slow 档、完整 mip 链、保留 alpha）。产物位于 `preview/`，入口
-`preview/tileset.json`，详细统计与警告写入 `preview/preview-report.json`，主报告
-`conversion-report.json` 增加独立 `preview` 摘要。预览参数与 `mesh-preview-v1` 进入检查点身份；
-暂停、取消与失败清理预览暂存；两套产物同一暂存目录发布，任一套校验失败都不能标记完整成功。
-预览根 `geometricError` 必须为正：Cesium 在根节点误差为 0 时会跳过整棵子树。CLI 默认关闭，
-App 新建任务默认开启。
+**轻量预览（`--preview`）**：与主产物相互独立，主产物的保真结论、编码和误差不变。沿原 OSGB 的
+`REPLACE` 金字塔保留顶层概览、偶数层级与全部叶层（跳过冗余奇数中间层以减少文件数与层级跳转），
+生成流式多级 LOD 的 `preview/tileset.json`，供 Three.js `3d-tiles-renderer` 按视锥与屏幕误差动态
+流式加载并用 LRU 回收离屏瓦片：远景秒开、拉近至任意位置自动加载与保真版同等清晰度的原生叶层纹理。
+几何省略 `NORMAL`，使用 `KHR_mesh_quantization`（位置与 `[0,1]` UV 归一化 U16 量化，越界 UV 自动
+回退 FLOAT）叠加 `EXT_meshopt_compression` 与 `KHR_materials_unlit` 以压缩体积与显存；纹理原样
+透传内嵌 JPEG/PNG（零重编码失真，按内容去重存放在 `preview/textures/`），采样器统一启用三线性
+mipmap（`LINEAR_MIPMAP_LINEAR`），瓦片按 `--threads` 并行转换。产物位于 `preview/`，入口
+`preview/tileset.json`，详细统计写入 `preview/preview-report.json`，主报告 `conversion-report.json`
+增加独立 `preview` 摘要。预览参数与 `mesh-preview-v2` 进入检查点身份；暂停、取消与失败清理预览暂存；
+两套产物同一暂存目录发布，任一套校验失败都不能标记完整成功。预览根 `geometricError` 必须为正：
+Cesium 在根节点误差为 0 时会跳过整棵子树。CLI 默认关闭，App 新建任务默认开启。
 
 **远景层重建（`--rebuild-top`）**：源根内容前沿 → 间距统计空间分组 → 目标面数取成功输入面数平均值
 向上取整 → 相邻开口边界焊接（合并距离 ≤2 m、垂距 ≤6 m、链长 ≥5，报告 `mergePairs`/`welds`/

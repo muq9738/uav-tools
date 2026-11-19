@@ -32,7 +32,7 @@ echo '{}' > "$output/tileset.json"
 echo '{"asset":{"version":"1.1"}}' > "$output/preview/tileset.json"
 echo '{"status":"complete"}' > "$output/preview/preview-report.json"
 cat <<'EOF'
-{"type":"result","report":{"status":"complete","geometryEncoding":"EXT_meshopt_compression","memoryBudgetBytes":0,"requestedThreads":2,"preserveEncodedTextures":true,"preview":{"status":"complete","entry":"preview/tileset.json","algorithm":"mesh-preview-v1","geometryEncoding":"EXT_meshopt_compression","textureFormat":"uastc"}}}
+{"type":"result","report":{"status":"complete","geometryEncoding":"EXT_meshopt_compression","memoryBudgetBytes":0,"requestedThreads":2,"preserveEncodedTextures":true,"preview":{"status":"complete","entry":"preview/tileset.json","algorithm":"mesh-preview-v2","geometryEncoding":"EXT_meshopt_compression+KHR_mesh_quantization","textureFormat":"original"}}}
 EOF
 `
 
@@ -47,7 +47,7 @@ func TestConvertPreviewPassesFlagAndValidatesSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.ExitCode != 0 || !strings.Contains(string(result.Report), `"algorithm":"mesh-preview-v1"`) {
+	if result.ExitCode != 0 || !strings.Contains(string(result.Report), `"algorithm":"mesh-preview-v2"`) {
 		t.Fatalf("预览结果未保留：%+v", result)
 	}
 }
@@ -63,9 +63,9 @@ func TestConvertPreviewRejectsMissingOrWrongReportAndOutputs(t *testing.T) {
 		{name: "missing preview report", old: `,"preview":{"status":"complete"`, new: `,"ignored":{"status":"complete"`},
 		{name: "wrong status", old: `"preview":{"status":"complete"`, new: `"preview":{"status":"failed"`},
 		{name: "wrong entry", old: `"entry":"preview/tileset.json"`, new: `"entry":"tileset.json"`},
-		{name: "wrong algorithm", old: `"algorithm":"mesh-preview-v1"`, new: `"algorithm":"other"`},
-		{name: "wrong geometry", old: `"algorithm":"mesh-preview-v1","geometryEncoding":"EXT_meshopt_compression"`, new: `"algorithm":"mesh-preview-v1","geometryEncoding":"raw"`},
-		{name: "wrong texture", old: `"textureFormat":"uastc"`, new: `"textureFormat":"etc1s"`},
+		{name: "wrong algorithm", old: `"algorithm":"mesh-preview-v2"`, new: `"algorithm":"other"`},
+		{name: "wrong geometry", old: `"algorithm":"mesh-preview-v2","geometryEncoding":"EXT_meshopt_compression+KHR_mesh_quantization"`, new: `"algorithm":"mesh-preview-v2","geometryEncoding":"raw"`},
+		{name: "wrong texture", old: `"textureFormat":"original"`, new: `"textureFormat":"etc1s"`},
 		{name: "missing tileset", old: `echo '{"asset":{"version":"1.1"}}' > "$output/preview/tileset.json"`, new: `:`},
 		{name: "invalid tileset", old: `echo '{"asset":{"version":"1.1"}}' > "$output/preview/tileset.json"`, new: `echo 'not-json' > "$output/preview/tileset.json"`},
 		{name: "missing preview report file", old: `echo '{"status":"complete"}' > "$output/preview/preview-report.json"`, new: `:`},

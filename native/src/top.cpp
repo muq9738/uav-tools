@@ -15,6 +15,7 @@
 #include <set>
 #include <stdexcept>
 #include <tuple>
+#include <unordered_map>
 
 // Independent native implementation from the behavior contract in
 // SPEC.md. Independent implementation, no external conversion runtime.
@@ -29,7 +30,12 @@ void check(const Options& options) {
     // The conversion layer translates its cancellation callback into pause.
 
 }
-struct Vertex {V p;Color color;std::set<unsigned> faces;unsigned version=0;bool alive=true;UV uv;};
+struct Vertex {V p;Color color;std::vector<unsigned> faces;unsigned version=0;bool alive=true;UV uv;};
+inline void addFace(Vertex& v,unsigned id) {if(std::find(v.faces.begin(),v.faces.end(),id)==v.faces.end()) v.faces.push_back(id);}
+inline void removeFace(Vertex& v,unsigned id) {
+    auto it=std::find(v.faces.begin(),v.faces.end(),id);
+    if(it!=v.faces.end()) {*it=v.faces.back();v.faces.pop_back();}
+}
 struct Face {std::array<unsigned,3> v;unsigned material=0;bool alive=true;};
 struct Material {osg::ref_ptr<osg::StateSet> state;osg::ref_ptr<osg::Image> image;osg::ref_ptr<osg::Texture> texture;};
 struct SourceFace {std::array<V,3> p;std::array<UV,3> uv;unsigned material=0;};
@@ -75,7 +81,7 @@ Mesh collect(const std::vector<GeometryInput>& inputs,const SpatialReference* sp
                 if(!material.image || !g->getTexCoordArray(0)) throw std::runtime_error("Top: texture/UV missing");
                 // CPU sampling is restricted to the same uncompressed image types
                 // already accepted by the source-exact writer.
-                encodeImage(*material.image);
+                validateImageForEncoding(*material.image);
             }
         }
         m.materials.push_back(material);
@@ -116,7 +122,7 @@ Mesh collect(const std::vector<GeometryInput>& inputs,const SpatialReference* sp
                     if(f.v[0]==f.v[1] || f.v[1]==f.v[2] || f.v[2]==f.v[0]) continue;
                     auto sorted=f.v;std::sort(sorted.begin(),sorted.end());if(!unique.insert(sorted).second) continue;
                     unsigned id=m.f.size();m.f.push_back(f);m.source.push_back(original);
-                    for(auto v:f.v) m.v[v].faces.insert(id);
+                    for(auto v:f.v) addFace(m.v[v],id);
                 }
             }
         }
@@ -133,8 +139,34 @@ struct Quadric {
 using Edge=std::pair<unsigned,unsigned>;
 Edge edge(unsigned a,unsigned b) {return std::minmax(a,b);}
 unsigned shared(const Mesh& m,unsigned a,unsigned b) {unsigned n=0;for(auto f:m.v[a].faces) if(m.f[f].alive && std::find(m.f[f].v.begin(),m.f[f].v.end(),b)!=m.f[f].v.end()) ++n;return n;}
-std::set<unsigned> neighbors(const Mesh& m,unsigned a) {std::set<unsigned> n;for(auto f:m.v[a].faces) if(m.f[f].alive) for(auto v:m.f[f].v) if(v!=a) n.insert(v);return n;}
-bool boundary(const Mesh& m,unsigned v) {for(auto n:neighbors(m,v)) if(shared(m,v,n)==1) return true;return false;}
+void collectNeighbors(const Mesh& m,unsigned a,std::vector<unsigned>& out) {
+    out.clear();
+    for(auto f:m.v[a].faces) if(m.f[f].alive) for(auto v:m.f[f].v) if(v!=a) out.push_back(v);
+    std::sort(out.begin(),out.end());
+    out.erase(std::unique(out.begin(),out.end()),out.end());
+}
+void collectBoundaryNeighbors(const Mesh& m,unsigned v,std::vector<unsigned>& scratch,std::vector<unsigned>& out) {
+    scratch.clear();out.clear();
+    for(auto f:m.v[v].faces) if(m.f[f].alive) for(auto u:m.f[f].v) if(u!=v) scratch.push_back(u);
+    std::sort(scratch.begin(),scratch.end());
+    for(std::size_t i=0;i<scratch.size();) {
+        std::size_t j=i+1;while(j<scratch.size() && scratch[j]==scratch[i]) ++j;
+        if(j-i==1) out.push_back(scratch[i]);
+        i=j;
+    }
+}
+bool boundary(const Mesh& m,unsigned v) {
+    std::vector<unsigned> scratch;
+    scratch.reserve(m.v[v].faces.size()*2);
+    for(auto f:m.v[v].faces) if(m.f[f].alive) for(auto u:m.f[f].v) if(u!=v) scratch.push_back(u);
+    std::sort(scratch.begin(),scratch.end());
+    for(std::size_t i=0;i<scratch.size();) {
+        std::size_t j=i+1;while(j<scratch.size() && scratch[j]==scratch[i]) ++j;
+        if(j-i==1) return true;
+        i=j;
+    }
+    return false;
+}
 struct Candidate {double cost;unsigned a,b,va,vb;V p;bool operator<(const Candidate& x) const {return std::tie(cost,a,b)>std::tie(x.cost,x.a,x.b);}};
 double interpolation(const Vertex& a,const Vertex& b,const V& p) {
     double d=(b.p-a.p).length();return d>1e-12?std::clamp((p-a.p).length()/d,0.,1.):0.;
@@ -147,7 +179,7 @@ UV interpolatedUv(const Vertex& a,const Vertex& b,const V& p) {
 }
 Candidate candidate(const Mesh& m,const std::vector<Quadric>& quadrics,unsigned a,unsigned b) {
     Quadric q=quadrics[a];q+=quadrics[b];auto& x=m.v[a];auto& y=m.v[b];
-    bool ba=boundary(m,a),bb=boundary(m,b);std::vector<V> choices;
+    bool ba=boundary(m,a),bb=boundary(m,b);std::vector<V> choices;choices.reserve(4);
     if(ba!=bb) choices.push_back(ba?x.p:y.p);
     else {
         choices={x.p,y.p,(x.p+y.p)*.5};
@@ -159,17 +191,23 @@ Candidate candidate(const Mesh& m,const std::vector<Quadric>& quadrics,unsigned 
                 -((c[1]*c[5]-c[2]*c[4])*c[3]+(c[1]*c[2]-c[0]*c[5])*c[6]+(c[0]*c[4]-c[1]*c[1])*c[8])/d));
         }
     }
+    std::vector<unsigned> bna,bnb,scratch;
+    if(ba && bb) {collectBoundaryNeighbors(m,a,scratch,bna);collectBoundaryNeighbors(m,b,scratch,bnb);}
     Candidate best{std::numeric_limits<double>::infinity(),a,b,x.version,y.version,{}};
     for(const auto& p:choices) {
         double value=q.value(p);
         if(ba && bb) {
             // Penalize movement of the open boundary instead of sealing it.
-            for(auto v:{a,b}) for(auto n:neighbors(m,v)) if(shared(m,v,n)==1) {
-                V before=m.v[n].p-m.v[v].p,after=m.v[n].p-p;double length=before.normalize();after.normalize();
+            for(auto n:bna) {
+                V before=m.v[n].p-x.p,after=m.v[n].p-p;double length=before.normalize();after.normalize();
+                value+=(1-std::clamp(before*after,-1.,1.))*length*100.;
+            }
+            for(auto n:bnb) {
+                V before=m.v[n].p-y.p,after=m.v[n].p-p;double length=before.normalize();after.normalize();
                 value+=(1-std::clamp(before*after,-1.,1.))*length*100.;
             }
             value*=10.;
-            if(shared(m,a,b)==1 && x.faces.size()==1 && y.faces.size()==1) value=normal(m,m.f[*x.faces.begin()]).length()*.5*.01;
+            if(shared(m,a,b)==1 && x.faces.size()==1 && y.faces.size()==1) value=normal(m,m.f[x.faces.front()]).length()*.5*.01;
         }
         auto c=interpolated(x,y,p);for(unsigned k=0;k<4;++k) value+=std::abs(x.color[k]-y.color[k])*101.+std::abs(c[k]-x.color[k])+std::abs(c[k]-y.color[k]);
         // UV 接缝在 collect(preserveUV) 中已拆成拓扑边界；此处再惩罚跨 UV 的坍缩，
@@ -183,19 +221,28 @@ bool safeCollapse(const Mesh& m,const Candidate& c,bool relaxTopology=false) {
     unsigned count=shared(m,c.a,c.b);if(count<1 || count>2) {if(!relaxTopology) return false;}
     if(m.v[c.a].faces.size()==1 && m.v[c.b].faces.size()==1) return false; // retain isolated components
     if(!relaxTopology) {
-        auto na=neighbors(m,c.a),nb=neighbors(m,c.b);unsigned common=0;for(auto v:na) if(nb.count(v)) ++common;
+        std::vector<unsigned> na,nb;
+        collectNeighbors(m,c.a,na);collectNeighbors(m,c.b,nb);
+        unsigned common=0;std::size_t ia=0,ib=0;
+        while(ia<na.size() && ib<nb.size()) {
+            if(na[ia]==nb[ib]) {++common;++ia;++ib;}
+            else if(na[ia]<nb[ib]) ++ia;
+            else ++ib;
+        }
         if(common!=count) return false; // manifold link condition
         if(boundary(m,c.a) && boundary(m,c.b) && count!=1) return false;
     }
-    std::set<unsigned> affected=m.v[c.a].faces;affected.insert(m.v[c.b].faces.begin(),m.v[c.b].faces.end());
-    for(auto i:affected) {
-        const auto& f=m.f[i];bool a=false,b=false;std::array<V,3> p;
-        for(unsigned k=0;k<3;++k) {a|=f.v[k]==c.a;b|=f.v[k]==c.b;p[k]=f.v[k]==c.a||f.v[k]==c.b?c.p:m.v[f.v[k]].p;}
-        if(a && b) continue;
-        V before=normal(m,f),after=(p[1]-p[0])^(p[2]-p[0]);
-        if(after.length2()<1e-24 || before*after<=0) return false;
-    }
-    return true;
+    auto checkFaces=[&](const std::vector<unsigned>& list) {
+        for(auto i:list) {
+            const auto& f=m.f[i];bool a=false,b=false;std::array<V,3> p;
+            for(unsigned k=0;k<3;++k) {a|=f.v[k]==c.a;b|=f.v[k]==c.b;p[k]=f.v[k]==c.a||f.v[k]==c.b?c.p:m.v[f.v[k]].p;}
+            if(a && b) continue;
+            V before=normal(m,f),after=(p[1]-p[0])^(p[2]-p[0]);
+            if(after.length2()<1e-24 || before*after<=0) return false;
+        }
+        return true;
+    };
+    return checkFaces(m.v[c.a].faces) && checkFaces(m.v[c.b].faces);
 }
 // ---- boundary sealing -----------------------------------------------------
 // Adjacent surfaces (blocks of one source, or separate inputs) usually leave an
@@ -385,7 +432,7 @@ Json sealBoundaries(Mesh& mesh,double sealDistance) {
         sealed.f.push_back(face);sealed.source.push_back(mesh.source[i]);
     }
     if(sealed.f.empty()) throw std::runtime_error("Top: boundary weld removed the whole surface");
-    for(unsigned i=0;i<sealed.f.size();++i) for(unsigned v:sealed.f[i].v) sealed.v[v].faces.insert(i);
+    for(unsigned i=0;i<sealed.f.size();++i) for(unsigned v:sealed.f[i].v) addFace(sealed.v[v],i);
     audit["weldedVertices"]=parent.size();audit["removedFaces"]=removed;
     audit["facesBefore"]=mesh.f.size();audit["facesAfter"]=sealed.f.size();
     mesh=std::move(sealed);
@@ -393,32 +440,42 @@ Json sealBoundaries(Mesh& mesh,double sealDistance) {
 }
 Json simplify(Mesh& m,std::size_t target,const Options& options,bool relaxTopology=false) {
     std::vector<Quadric> q(m.v.size());
-    for(const auto& f:m.f) {
+    for(const auto& f:m.f) if(f.alive) {
         V n=normal(m,f);if(n.normalize()==0) continue;double d=-(n*m.v[f.v[0]].p);
         Quadric plane{{n.x()*n.x(),n.x()*n.y(),n.x()*n.z(),n.x()*d,n.y()*n.y(),n.y()*n.z(),n.y()*d,n.z()*n.z(),n.z()*d,d*d}};
         for(auto v:f.v) q[v]+=plane;
     }
-    std::priority_queue<Candidate> queue;std::set<Edge> edges;
-    for(const auto& f:m.f) for(unsigned k=0;k<3;++k) edges.insert(edge(f.v[k],f.v[(k+1)%3]));
+    std::priority_queue<Candidate> queue;
+    std::vector<Edge> edges;edges.reserve(m.f.size()*3);
+    for(const auto& f:m.f) if(f.alive) for(unsigned k=0;k<3;++k) edges.push_back(edge(f.v[k],f.v[(k+1)%3]));
+    std::sort(edges.begin(),edges.end());edges.erase(std::unique(edges.begin(),edges.end()),edges.end());
     for(auto e:edges) queue.push(candidate(m,q,e.first,e.second));
-    std::size_t live=m.f.size(),collapses=0,rejected=0;double displacement=0;
+    std::size_t live=0;for(const auto& f:m.f) if(f.alive) ++live;
+    std::size_t collapses=0,rejected=0;double displacement=0;
+    std::vector<unsigned> affected,around,nb,scratch;std::vector<Edge> update;
     while(live>target && !queue.empty()) {
         if(collapses%128==0) check(options);
         auto c=queue.top();queue.pop();auto& a=m.v[c.a];auto& b=m.v[c.b];
         if(!a.alive || !b.alive || a.version!=c.va || b.version!=c.vb || !shared(m,c.a,c.b)) continue;
         if(!safeCollapse(m,c,relaxTopology)) {++rejected;continue;}
-        auto affected=a.faces;affected.insert(b.faces.begin(),b.faces.end());
-        auto around=neighbors(m,c.a);auto bn=neighbors(m,c.b);around.insert(bn.begin(),bn.end());
+        affected=a.faces;affected.insert(affected.end(),b.faces.begin(),b.faces.end());
+        std::sort(affected.begin(),affected.end());affected.erase(std::unique(affected.begin(),affected.end()),affected.end());
+        collectNeighbors(m,c.a,around);collectNeighbors(m,c.b,nb);
+        around.insert(around.end(),nb.begin(),nb.end());around.push_back(c.a);
+        std::sort(around.begin(),around.end());around.erase(std::unique(around.begin(),around.end()),around.end());
+        around.erase(std::remove(around.begin(),around.end(),c.b),around.end());
         displacement=std::max({displacement,(c.p-a.p).length(),(c.p-b.p).length()});
         a.color=interpolated(a,b,c.p);a.uv=interpolatedUv(a,b,c.p);a.p=c.p;q[c.a]+=q[c.b];b.alive=false;
         for(auto i:affected) {
-            auto& f=m.f[i];for(auto v:f.v) m.v[v].faces.erase(i);
+            auto& f=m.f[i];for(auto v:f.v) removeFace(m.v[v],i);
             for(auto& v:f.v) if(v==c.b) v=c.a;
             if(f.v[0]==f.v[1] || f.v[1]==f.v[2] || f.v[2]==f.v[0]) {f.alive=false;--live;}
-            else for(auto v:f.v) m.v[v].faces.insert(i);
+            else for(auto v:f.v) addFace(m.v[v],i);
         }
-        around.insert(c.a);around.erase(c.b);for(auto v:around) ++m.v[v].version;
-        std::set<Edge> update;for(auto v:around) for(auto n:neighbors(m,v)) update.insert(edge(v,n));
+        for(auto v:around) ++m.v[v].version;
+        update.clear();
+        for(auto v:around) {collectNeighbors(m,v,scratch);for(auto n:scratch) update.push_back(edge(v,n));}
+        std::sort(update.begin(),update.end());update.erase(std::unique(update.begin(),update.end()),update.end());
         for(auto e:update) queue.push(candidate(m,q,e.first,e.second));++collapses;
     }
     return {{"inputTriangles",m.source.size()},{"targetTriangles",target},{"outputTriangles",live},
@@ -956,7 +1013,7 @@ Json decimateToBudget(Mesh& mesh,std::size_t target) {
         index=it->second;
     }
     reduced.v=std::move(vertices);
-    for(unsigned i=0;i<reduced.f.size();++i) for(auto v:reduced.f[i].v) reduced.v[v].faces.insert(i);
+    for(unsigned i=0;i<reduced.f.size();++i) for(auto v:reduced.f[i].v) addFace(reduced.v[v],i);
     mesh=std::move(reduced);
     return {{"method","triangle-decimate"},{"outputTriangles",mesh.f.size()},{"budgetReached",mesh.f.size()<=target},
             {"minKeptFaceAreaSquareMeters",minimum},{"warning","非流形几何无法聚簇，按面积裁剪三角面，可能出现空洞"}};
@@ -987,17 +1044,33 @@ Json clusterToBudget(Mesh& mesh,std::size_t target) {
     double diagonal=std::max(1e-6,(high-low).length());
     auto build=[&](double cell) {
         struct Accumulated {V position;UV uv;Color color;unsigned count=0;};
-        using Key=std::tuple<long long,long long,long long,long long,long long,unsigned,unsigned>;
-        std::map<Key,unsigned> remap;std::vector<Accumulated> accumulated;std::vector<Face> faces;
+        struct ClusterKey {
+            long long x,y,z,u,v;unsigned mat,col;
+            bool operator==(const ClusterKey& o) const {
+                return x==o.x && y==o.y && z==o.z && u==o.u && v==o.v && mat==o.mat && col==o.col;
+            }
+        };
+        struct ClusterHash {
+            std::size_t operator()(const ClusterKey& k) const noexcept {
+                std::size_t h=static_cast<std::size_t>(k.x)*11400714819323198485ULL;
+                auto mix=[&](std::size_t v) {h^=v+0x9e3779b97f4a7c15ULL+(h<<6)+(h>>2);};
+                mix(static_cast<std::size_t>(k.y));mix(static_cast<std::size_t>(k.z));
+                mix(static_cast<std::size_t>(k.u));mix(static_cast<std::size_t>(k.v));
+                mix(k.mat);mix(k.col);return h;
+            }
+        };
+        std::unordered_map<ClusterKey,unsigned,ClusterHash> remap;remap.reserve(mesh.v.size());
+        std::vector<Accumulated> accumulated;accumulated.reserve(mesh.v.size());
+        std::vector<Face> faces;faces.reserve(mesh.f.size());
         double inverse=1./cell;
         auto quantize=[] (double value,double inverse) {return static_cast<long long>(std::floor(value*inverse));};
         for(const auto& face:mesh.f) if(face.alive) {
             std::array<unsigned,3> mapped{};
             for(unsigned k=0;k<3;++k) {
                 const auto& vertex=mesh.v[face.v[k]];
-                Key key={quantize(vertex.p.x(),inverse),quantize(vertex.p.y(),inverse),quantize(vertex.p.z(),inverse),
-                         quantize(vertex.uv.x(),inverse),quantize(vertex.uv.y(),inverse),face.material,
-                         static_cast<unsigned>(std::llround(std::clamp(vertex.color.x(),0.,1.)*255.))};
+                ClusterKey key{quantize(vertex.p.x(),inverse),quantize(vertex.p.y(),inverse),quantize(vertex.p.z(),inverse),
+                               quantize(vertex.uv.x(),32.0),quantize(vertex.uv.y(),32.0),face.material,
+                               static_cast<unsigned>(std::llround(std::clamp(vertex.color.x(),0.,1.)*255.))};
                 auto [it,inserted]=remap.emplace(key,accumulated.size());
                 if(inserted) accumulated.push_back({});
                 auto& slot=accumulated[it->second];
@@ -1011,21 +1084,23 @@ Json clusterToBudget(Mesh& mesh,std::size_t target) {
         for(auto& slot:accumulated) {
             Vertex merged;double count=std::max(1U,slot.count);
             merged.p=slot.position/count;merged.uv=slot.uv/count;merged.color=slot.color/count;
-            vertices.push_back(merged);
+            vertices.push_back(std::move(merged));
         }
-        for(unsigned i=0;i<faces.size();++i) for(auto v:faces[i].v) vertices[v].faces.insert(i);
         return std::make_pair(std::move(vertices),std::move(faces));
     };
     // 单调性：格子越小面数越多。二分找“面数不超过预算的最小格子”，
     // 这样既保证预算，又尽量保留细节；过粗导致整块消失时不直接放弃。
     double lowCell=diagonal/8192.,highCell=diagonal,chosen=0;
     std::pair<std::vector<Vertex>,std::vector<Face>> best;
-    for(unsigned iteration=0;iteration<32;++iteration) {
+    for(unsigned iteration=0;iteration<18;++iteration) {
         double middle=(lowCell+highCell)*.5;auto candidate=build(middle);
-        if(candidate.second.size()>target || candidate.second.empty()) {lowCell=middle;continue;}
+        if(candidate.second.empty()) {highCell=middle;continue;}
+        if(candidate.second.size()>target) {lowCell=middle;continue;}
         best=std::move(candidate);chosen=middle;highCell=middle;
+        if(best.second.size()==target) break;
     }
     if(best.second.empty()) return {{"method","none"},{"budgetReached",false}};
+    for(unsigned i=0;i<best.second.size();++i) for(auto v:best.second[i].v) addFace(best.first[v],i);
     mesh.v=std::move(best.first);mesh.f=std::move(best.second);
     return {{"method","vertex-cluster"},{"cellSizeMeters",chosen},{"outputTriangles",liveFaces(mesh)},
             {"budgetReached",liveFaces(mesh)<=target},{"diagonalMeters",diagonal},{"targetTriangles",target}};

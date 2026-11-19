@@ -444,7 +444,7 @@ function reportGrid(report) {
     ['几何编码', ({ raw: '原始数组', EXT_meshopt_compression: 'Meshopt（无量化）', KHR_draco_mesh_compression: 'Draco（有损）' })[report.geometryEncoding] || report.geometryEncoding],
     ['纹理编码', ({ original: '原图', uastc: 'KTX2-UASTC（有损）', etc1s: 'KTX2-ETC1S（有损）' })[report.textureFormat]],
     ['新增远景层', report.rebuildTop != null ? (report.topGlbs ? `${report.topGlbs} 个（有损，焊缝 ${report.topSealDistance ?? 2} 米）` : '无') : null],
-    ['轻量预览', report.preview ? `${report.preview.triangles} 三角面 · ${report.preview.glbs} GLB · Meshopt + UASTC` : null],
+    ['轻量预览', report.preview ? `${report.preview.triangles} 三角面 · ${report.preview.glbs} GLB · ${report.preview.streamingLod ? '流式 LOD + 量化 Meshopt + 原画质纹理' : 'Meshopt + UASTC'}` : null],
     ['位置量化误差', (report.geometryEncoding === 'KHR_draco_mesh_compression' || report.quantizeGeometry) && report.quantizationErrorMeters != null ? `${(report.quantizationErrorMeters * 1000).toFixed(3)} 毫米` : null],
     ['远景表面偏移（采样）', report.topAncestors?.length ? `${(Math.max(...report.topAncestors.map(top => top.bake?.maxSampledSurfaceDistanceMeters || 0)) * 1000).toFixed(3)} 毫米` : null],
     ['压缩纹理显存（估算）', report.textureResidency?.withMipChainBytes > 0 ? (() => {

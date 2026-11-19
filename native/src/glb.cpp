@@ -74,11 +74,15 @@ struct Writer {
     bool compressGeometry=false;
     bool quantizeGeometry=false;
     bool preview=false;
+    unsigned previewThreads=1;
+    unsigned previewMaxTextureSize=0;
+    unsigned previewJpegQuality=80;
     std::string textureFormat="original";
     std::size_t virtualBufferLength=0;
     const SpatialReference* spatial=nullptr;
     std::map<std::vector<double>,unsigned> meshesByMatrix;
     std::map<const osg::Texture*,std::pair<int,bool>> textures;
+    std::map<std::string,int> embeddedImageIds;
     void requireExtension(const char* name) {
         for(auto key:{"extensionsUsed","extensionsRequired"}) {
             if(!doc.contains(key)) doc[key]=Json::array();
@@ -165,28 +169,62 @@ struct Writer {
             throw std::runtime_error("已编码纹理容器不是 PNG/JPEG，尚未建立等价输出，拒绝静默转码: "+image->getFileName());
         osg::ref_ptr<EncodedImage> encoded=preserve?captured:nullptr;
         bool original=encoded.valid();Json basisAudit;
-        if(textureFormat!="original") {auto basis=preview?encodePreviewBasisImage(*image):encodeBasisImage(*image,textureFormat);encoded=basis.encoded;basisAudit=basis.audit;original=false;}
-        if(!encoded) encoded=encodeImage(*image);
-        std::string name=contentKey(encoded->bytes)+(encoded->mime=="image/ktx2"?".ktx2":encoded->mime=="image/jpeg"?".jpg":".png");
-        {
-            static std::mutex textureMutex;std::lock_guard<std::mutex> lock(textureMutex);
-            fs::path path=textureDir/name;
-            if(fs::exists(path)) {if(readBytes(path)!=encoded->bytes) throw std::runtime_error("图片内容键冲突");}
-            else atomicWrite(path,encoded->bytes);
+        if(textureFormat!="original") {auto basis=preview?encodePreviewBasisImage(*image,previewThreads):encodeBasisImage(*image,textureFormat);encoded=basis.encoded;basisAudit=basis.audit;original=false;}
+        if(preview && textureFormat=="original" && previewMaxTextureSize>0) {
+            if(auto resized=encodePreviewResizedImage(*image,previewMaxTextureSize,previewJpegQuality)) {
+                if(!encoded || resized->bytes.size()<encoded->bytes.size()) {
+                    encoded=resized;
+                    original=false;
+                }
+            }
         }
-        int imageId=doc["images"].size();doc["images"].push_back({{"uri","../textures/"+name},{"mimeType",encoded->mime}});
+        if(!encoded) encoded=encodeImage(*image);
+        std::string key=contentKey(encoded->bytes);
+        int imageId=-1;
+        std::string auditUri;
+        bool embeddedNew=false;
+        if(preview) {
+            auto existingImage=embeddedImageIds.find(key);
+            if(existingImage!=embeddedImageIds.end()) {
+                imageId=existingImage->second;
+            } else {
+                while(binary.size()%4) binary.push_back(0);
+                int viewIndex=doc["bufferViews"].size();
+                doc["bufferViews"].push_back({{"buffer",0},{"byteOffset",binary.size()},{"byteLength",encoded->bytes.size()}});
+                binary.insert(binary.end(),encoded->bytes.begin(),encoded->bytes.end());
+                imageId=doc["images"].size();
+                doc["images"].push_back({{"bufferView",viewIndex},{"mimeType",encoded->mime}});
+                embeddedImageIds[key]=imageId;
+                embeddedNew=true;
+            }
+        } else {
+            std::string name=key+(encoded->mime=="image/ktx2"?".ktx2":encoded->mime=="image/jpeg"?".jpg":".png");
+            {
+                static std::mutex textureMutex;std::lock_guard<std::mutex> lock(textureMutex);
+                fs::path path=textureDir/name;
+                if(fs::exists(path)) {if(readBytes(path)!=encoded->bytes) throw std::runtime_error("图片内容键冲突");}
+                else atomicWrite(path,encoded->bytes);
+            }
+            imageId=doc["images"].size();doc["images"].push_back({{"uri","../textures/"+name},{"mimeType",encoded->mime}});
+            auditUri="textures/"+name;
+        }
         int sampler=doc["samplers"].size();
-        doc["samplers"].push_back({{"magFilter",t->getFilter(osg::Texture::MAG_FILTER)},
-            {"minFilter",t->getFilter(osg::Texture::MIN_FILTER)},
+        doc["samplers"].push_back({{"magFilter",preview?GL_LINEAR:t->getFilter(osg::Texture::MAG_FILTER)},
+            {"minFilter",preview?GL_LINEAR_MIPMAP_LINEAR:t->getFilter(osg::Texture::MIN_FILTER)},
             {"wrapS",wrapMode(t->getWrap(osg::Texture::WRAP_S))},{"wrapT",wrapMode(t->getWrap(osg::Texture::WRAP_T))}});
         int id=doc["textures"].size();
         if(encoded->mime=="image/ktx2") {
             requireExtension("KHR_texture_basisu");doc["textures"].push_back({{"sampler",sampler},{"extensions",{{"KHR_texture_basisu",{{"source",imageId}}}}}});
         } else doc["textures"].push_back({{"source",imageId},{"sampler",sampler}});
-        result.images++;result.imageAudit.push_back({{"sourceName",image->getFileName()},
-            {"uri","textures/"+name},{"originalEncoded",original},{"flipV",encoded->flipV},
-            {"width",image->s()},{"height",image->t()},{"bytes",encoded->bytes.size()}});
-        if(!basisAudit.is_null()) result.imageAudit.back()["basis"]=basisAudit;
+        if(!preview || embeddedNew) {
+            result.images++;
+            Json audit={{"sourceName",image->getFileName()},
+                {"embedded",preview},{"originalEncoded",original},{"flipV",encoded->flipV},
+                {"width",image->s()},{"height",image->t()},{"bytes",encoded->bytes.size()}};
+            if(!auditUri.empty()) audit["uri"]=auditUri;
+            if(!basisAudit.is_null()) audit["basis"]=basisAudit;
+            result.imageAudit.push_back(std::move(audit));
+        }
         return textures[t]={id,encoded->flipV};
     }
     int material(const osg::StateSet* state,bool hasUv) {
@@ -317,11 +355,14 @@ struct Writer {
         int position=quantizeGeometry?normalizedShorts(reorderQuantized(quantizedPositions),3,true):floats(reorder(positions,3),3,true);
         auto writeUv=[&](const std::vector<float>& values) {
             if(!quantizeGeometry) return floats(values,2);
-            std::vector<std::uint16_t> normalized;normalized.reserve(values.size());
-            for(auto value:values) {
-                if(value<0 || value>1) throw std::runtime_error("UV 超出归一化范围，拒绝量化实验");
-                normalized.push_back(static_cast<std::uint16_t>(std::llround(value*65535.0)));
+            bool inRange=true;
+            for(auto value:values) if(value<0 || value>1) {inRange=false;break;}
+            if(!inRange) {
+                if(preview) return floats(values,2);
+                throw std::runtime_error("UV 超出归一化范围，拒绝量化实验");
             }
+            std::vector<std::uint16_t> normalized;normalized.reserve(values.size());
+            for(auto value:values) normalized.push_back(static_cast<std::uint16_t>(std::llround(value*65535.0)));
             return normalizedShorts(normalized,2);
         };
         auto uvSource=g->getTexCoordArray(0);
@@ -363,7 +404,7 @@ struct Writer {
             Json attributes={{"POSITION",position}};
             int uvAccessor=perSetUv?writeUv(reorder(arrayValues(uvSource,2,count,p),2)):uv;
             if(uvAccessor>=0) attributes["TEXCOORD_0"]=uvAccessor;
-            if(g->getNormalArray()) {
+            if(!preview && g->getNormalArray()) {
                 auto normals=arrayValues(g->getNormalArray(),3,count,p);
                 if(spatial) {
                     osg::Matrixd inverse;if(!inverse.invert(input.matrix)) throw std::runtime_error("几何矩阵不可逆");
@@ -419,7 +460,7 @@ struct Writer {
 }
 ContentResult writeGlb(const std::vector<GeometryInput>& meshes,const fs::path& output,const fs::path& textures,bool preserve,const SpatialReference* spatial,bool compressGeometry,bool quantizeGeometry,const Options* codecOptions) {
     Writer writer;writer.textureDir=textures;writer.preserve=preserve;writer.spatial=spatial;writer.compressGeometry=compressGeometry && !(codecOptions && codecOptions->dracoGeometry);writer.quantizeGeometry=quantizeGeometry;
-    if(codecOptions) {writer.textureFormat=codecOptions->textureFormat;writer.preview=codecOptions->previewEncoding;}
+    if(codecOptions) {writer.textureFormat=codecOptions->textureFormat;writer.preview=codecOptions->previewEncoding;writer.previewThreads=std::max(1U,codecOptions->threads);writer.previewMaxTextureSize=codecOptions->previewMaxTextureSize;writer.previewJpegQuality=codecOptions->previewJpegQuality;}
     if(writer.preview) writer.requireExtension("KHR_materials_unlit");
     for(const auto& mesh:meshes) writer.geometry(mesh);
     if(writer.doc["meshes"].empty()) throw std::runtime_error("拒绝输出空 GLB");
