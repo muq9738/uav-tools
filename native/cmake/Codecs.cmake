@@ -7,7 +7,9 @@ set(DRACO_ANIMATION_ENCODING OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(draco
   GIT_REPOSITORY https://github.com/google/draco.git
   GIT_TAG 1.5.7
-  GIT_SHALLOW TRUE)
+  GIT_SHALLOW TRUE
+  GIT_SUBMODULES ""
+  GIT_SUBMODULES_RECURSE FALSE)
 FetchContent_GetProperties(draco)
 if(NOT draco_POPULATED)
   FetchContent_Populate(draco)
@@ -21,7 +23,9 @@ add_subdirectory(${draco_SOURCE_DIR} ${draco_BINARY_DIR})
 FetchContent_Declare(basis_universal
   GIT_REPOSITORY https://github.com/BinomialLLC/basis_universal.git
   GIT_TAG 1.16.4
-  GIT_SHALLOW TRUE)
+  GIT_SHALLOW TRUE
+  GIT_SUBMODULES ""
+  GIT_SUBMODULES_RECURSE FALSE)
 FetchContent_GetProperties(basis_universal)
 if(NOT basis_universal_POPULATED)
   FetchContent_Populate(basis_universal)
