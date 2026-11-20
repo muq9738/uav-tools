@@ -608,6 +608,7 @@ async function loadDoctor() {
     const rows = [
       ['应用版本', report.version],
       ['系统', report.platform],
+      ['HTTPS 切片服务', report.httpsAddr ? 'https://' + report.httpsAddr : '未启用'],
       ['数据目录', report.dataDir],
       ['转换器', sidecar.path || '未找到'],
       ['进度来源', sidecar.jsonEvents ? '结构化事件' : '输出文件估算'],
@@ -666,6 +667,19 @@ async function bootstrap() {
   }
   try {
     state.config = await api('/api/config')
+    if (state.config.version && $('#app-version')) {
+      $('#app-version').textContent = 'v' + state.config.version
+    }
+    if (state.config.updaterAvailable && $('#check-updates')) {
+      $('#check-updates').hidden = false
+      $('#check-updates').addEventListener('click', async () => {
+        try {
+          await api('/api/check-updates', { method: 'POST' })
+        } catch (error) {
+          notify('检查更新失败：' + error.message, true)
+        }
+      })
+    }
     const sidecar = state.config.sidecar || {}
     for (const option of $('#geometry').options) {
       if (option.value === 'draco') option.disabled = !sidecar.geometryFormats?.includes('draco')

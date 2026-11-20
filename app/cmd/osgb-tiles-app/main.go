@@ -14,13 +14,14 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-
-	"github.com/egoist/mygo"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/plugins/updater"
 	"github.com/muq9738/uav-tools/app/internal/api"
 	"github.com/muq9738/uav-tools/app/internal/desktop"
 	"github.com/muq9738/uav-tools/app/internal/jobs"
@@ -28,8 +29,53 @@ import (
 	"github.com/muq9738/uav-tools/app/web"
 )
 
+const defaultCompatHTTPSAddr = "0.0.0.0:42225"
+
 // version 由构建参数覆盖。
-var version = "0.1.0"
+var version = "0.6.0"
+
+func appVersion() string {
+	if v := strings.TrimSpace(mygo.App.Version()); v != "" && v != "0.0.0" {
+		return v
+	}
+	return version
+}
+
+func resolveCompatHTTPSAddr(httpsAddr, primaryAddr string, headless, primaryTLS bool) string {
+	trimmed := strings.TrimSpace(httpsAddr)
+	if strings.EqualFold(trimmed, "off") || strings.EqualFold(trimmed, "none") {
+		return ""
+	}
+	if trimmed != "" {
+		return trimmed
+	}
+	// 双击桌面窗口或浏览器模式下，自动在 0.0.0.0:42225 伴随监听内置 HTTPS 切片兼容服务；
+	// --headless 模式保持仅监听 --addr（除非显式传递 --https-addr），避免影响现有自动化测试。
+	if !headless && !primaryTLS && strings.TrimSpace(primaryAddr) == "127.0.0.1:0" {
+		return defaultCompatHTTPSAddr
+	}
+	return ""
+}
+
+func startHTTPSCompatServer(handler http.Handler, listenAddr, token, certFile, keyFile, dataDir string, onErr func(error)) (*http.Server, net.Addr, string, error) {
+	rawListener, err := api.Listen(listenAddr, token)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("无法在 %s 启动内置 HTTPS 切片服务（端口可能已被占用；可用 --https-addr=off 禁用或指定其他端口）：%w", listenAddr, err)
+	}
+	tlsConfig, certSource, err := api.LoadOrGenerateTLSConfig(certFile, keyFile, dataDir, listenAddr)
+	if err != nil {
+		rawListener.Close()
+		return nil, nil, "", fmt.Errorf("初始化内置 HTTPS 证书失败：%w", err)
+	}
+	tlsListener := tls.NewListener(rawListener, tlsConfig)
+	srv := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second}
+	go func() {
+		if err := srv.Serve(tlsListener); err != nil && !errors.Is(err, http.ErrServerClosed) && onErr != nil {
+			onErr(err)
+		}
+	}()
+	return srv, tlsListener.Addr(), certSource, nil
+}
 
 func init() {
 	// MyGo 要求窗口事件循环运行在进程主线程。
@@ -49,6 +95,7 @@ func run() error {
 	headless := flags.Bool("headless", false, "只启动 HTTP 服务，不打开桌面窗口")
 	browser := flags.Bool("browser", false, "在默认浏览器打开界面；关闭终端或按 Ctrl+C 退出")
 	addr := flags.String("addr", "127.0.0.1:0", "HTTP/HTTPS 监听地址（例如 0.0.0.0:42225）")
+	httpsAddr := flags.String("https-addr", "", "伴随启动的内置 HTTPS 兼容服务地址（桌面/浏览器模式默认 0.0.0.0:42225，设为 off 禁用）")
 	token := flags.String("token", os.Getenv("OSGB_TILES_TOKEN"), "可选访问令牌；留空则不启用鉴权")
 	useTLS := flags.Bool("tls", false, "启用内置 HTTPS（未指定证书时自动生成并持久化自签证书）")
 	tlsCert := flags.String("tls-cert", "", "HTTPS 证书 PEM 路径（与 --tls-key 配合使用）")
@@ -64,8 +111,9 @@ func run() error {
 	if *headless && *browser {
 		return errors.New("--headless 与 --browser 不能同时使用")
 	}
+	currentVersion := appVersion()
 	if *showVersion {
-		fmt.Printf("osgb-tiles-app %s (%s/%s)\n", version, runtime.GOOS, runtime.GOARCH)
+		fmt.Printf("osgb-tiles-app %s (%s/%s)\n", currentVersion, runtime.GOOS, runtime.GOARCH)
 		return nil
 	}
 
@@ -108,18 +156,44 @@ func run() error {
 	defer cancel()
 
 	var picker *desktop.Picker
+	var checkUpdates func()
 	if !*headless && !*browser {
 		picker = &desktop.Picker{}
+		if token := strings.TrimSpace(updateGitHubToken); token != "" {
+			mygo.Updater.SetSource(newGitHubTokenSource(updateGitHubRepo, token))
+		}
+		mygo.Use(updater.Plugin)
+		if runtime.GOOS == "darwin" {
+			mygo.App.SetMenu(mygo.NewMenu([]*mygo.MenuItem{
+				{Label: "OSGB 转 3D Tiles", Submenu: []*mygo.MenuItem{
+					{Role: mygo.RoleAbout},
+					updater.MenuItem(),
+					mygo.Separator(),
+					{Role: mygo.RoleQuit},
+				}},
+				{Role: mygo.RoleEditMenu},
+				{Role: mygo.RoleWindowMenu},
+			}))
+		}
+		checkUpdates = updater.CheckForUpdates
+	}
+	enableTLS := *useTLS || *tlsCert != "" || *tlsKey != ""
+	compatHTTPSAddr := resolveCompatHTTPSAddr(*httpsAddr, *addr, *headless, enableTLS)
+	activeHTTPSAddr := compatHTTPSAddr
+	if activeHTTPSAddr == "" && enableTLS {
+		activeHTTPSAddr = *addr
 	}
 	options := api.Options{
-		Manager:     manager,
-		Runner:      converter,
-		Web:         web.Files,
-		Version:     version,
-		Token:       *token,
-		DataDir:     *dataDir,
-		MaxParallel: *maxParallel,
-		Desktop:     picker != nil,
+		Manager:      manager,
+		Runner:       converter,
+		Web:          web.Files,
+		Version:      currentVersion,
+		Token:        *token,
+		DataDir:      *dataDir,
+		MaxParallel:  *maxParallel,
+		Desktop:      picker != nil,
+		HTTPSAddr:    activeHTTPSAddr,
+		CheckUpdates: checkUpdates,
 	}
 	if picker != nil {
 		options.Picker = picker.Pick
@@ -133,7 +207,6 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	enableTLS := *useTLS || *tlsCert != "" || *tlsKey != ""
 	if enableTLS {
 		tlsConfig, certSource, err := api.LoadOrGenerateTLSConfig(*tlsCert, *tlsKey, *dataDir, *addr)
 		if err != nil {
@@ -155,6 +228,22 @@ func run() error {
 		defer stop()
 		httpServer.Shutdown(shutdown)
 	}()
+
+	if compatHTTPSAddr != "" {
+		compatServer, compatBound, certSource, err := startHTTPSCompatServer(server.Handler(), compatHTTPSAddr, *token, *tlsCert, *tlsKey, *dataDir, func(err error) {
+			log.Printf("内置 HTTPS 切片服务结束：%v", err)
+			cancel()
+		})
+		if err != nil {
+			return err
+		}
+		log.Printf("内置 HTTPS 切片兼容服务已监听：https://%s（证书：%s）", compatBound.String(), certSource)
+		defer func() {
+			shutdown, stop := context.WithTimeout(context.Background(), 5*time.Second)
+			defer stop()
+			compatServer.Shutdown(shutdown)
+		}()
+	}
 
 	url := pageURL(listener.Addr(), *token, enableTLS)
 	log.Printf("界面地址：%s", url)

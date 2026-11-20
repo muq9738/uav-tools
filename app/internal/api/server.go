@@ -32,10 +32,13 @@ type Options struct {
 	DataDir     string
 	MaxParallel int
 	Desktop     bool
+	HTTPSAddr   string
 	// Picker 只在桌面模式下提供，用于调起系统目录选择器。
 	Picker func(ctx context.Context) (string, error)
 	// Reveal 只在桌面模式下提供，用于在文件管理器中显示输出目录。
 	Reveal func(path string) error
+	// CheckUpdates 只在桌面打包模式下提供，触发版本检查窗口。
+	CheckUpdates func()
 }
 
 type runnerFeatures interface {
@@ -65,6 +68,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("GET /api/config", s.handleConfig)
 	mux.HandleFunc("GET /api/doctor", s.handleDoctor)
+	mux.HandleFunc("POST /api/check-updates", s.handleCheckUpdates)
 	mux.HandleFunc("POST /api/pick-directory", s.handlePickDirectory)
 	mux.HandleFunc("POST /api/jobs/{id}/reveal", s.handleReveal)
 	mux.HandleFunc("GET /api/jobs", s.handleListJobs)
@@ -135,13 +139,15 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handleConfig(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"version":         s.options.Version,
-		"desktop":         s.options.Desktop,
-		"pickerAvailable": s.options.Picker != nil,
-		"revealAvailable": s.options.Reveal != nil,
-		"maxParallel":     s.options.MaxParallel,
-		"dataDir":         s.options.DataDir,
-		"sidecar":         s.options.Runner.Features(),
+		"version":          s.options.Version,
+		"desktop":          s.options.Desktop,
+		"httpsAddr":        s.options.HTTPSAddr,
+		"updaterAvailable": s.options.CheckUpdates != nil,
+		"pickerAvailable":  s.options.Picker != nil,
+		"revealAvailable":  s.options.Reveal != nil,
+		"maxParallel":      s.options.MaxParallel,
+		"dataDir":          s.options.DataDir,
+		"sidecar":          s.options.Runner.Features(),
 	})
 }
 
@@ -162,9 +168,19 @@ func (s *Server) handleDoctor(w http.ResponseWriter, _ *http.Request) {
 		"platform":        runtime.GOOS + "/" + runtime.GOARCH,
 		"dataDir":         s.options.DataDir,
 		"dataDirWritable": writable,
+		"httpsAddr":       s.options.HTTPSAddr,
 		"sidecar":         features,
 		"note":            "转换器为按平台打包的独立二进制；App 与命令行共用随包 native 和 SDK 运行时。",
 	})
+}
+
+func (s *Server) handleCheckUpdates(w http.ResponseWriter, _ *http.Request) {
+	if s.options.CheckUpdates == nil {
+		writeError(w, http.StatusNotImplemented, "当前运行模式未启用内置自动更新")
+		return
+	}
+	s.options.CheckUpdates()
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "checking"})
 }
 
 func (s *Server) handlePickDirectory(w http.ResponseWriter, r *http.Request) {

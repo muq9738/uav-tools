@@ -1,12 +1,13 @@
 # HTTP API
 
-默认 `127.0.0.1:8990`。可选设置 `--token` 时，接口支持 `Authorization: Bearer <token>` 或 `?token=…`；留空则不启用鉴权。加 `--tls` 可启用内置 HTTPS（基于 Go 标准库 `crypto/tls`，自动生成并持久化自签证书到 `<data-dir>/tls/`，也可用 `--tls-cert` / `--tls-key` 指定外部证书）。
+默认 `127.0.0.1:8990`（`osgb-tiles-app` 未传参数启动桌面窗口或 `--browser` 模式时，本地界面使用随机 `127.0.0.1` 端口，并同时自动启动 `--https-addr 0.0.0.0:42225` 内置 HTTPS 兼容服务；传 `--https-addr=off` 可关闭）。可选设置 `--token` 时，接口支持 `Authorization: Bearer <token>` 或 `?token=…`；留空则不启用鉴权。加 `--tls` 可将主监听地址也切换为内置 HTTPS（基于 Go 标准库 `crypto/tls`，自动生成并持久化自签证书到 `<data-dir>/tls/`，也可用 `--tls-cert` / `--tls-key` 指定外部证书）。
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
 | GET | `/api/health` | 外壳版本与 native 可用性 |
-| GET | `/api/config` | 数据目录、native 路径/能力/默认值、桌面能力 |
-| GET | `/api/doctor` | 数据目录写入与 native 能力检查 |
+| GET | `/api/config` | 数据目录、native 路径/能力/默认值、桌面能力、HTTPS 兼容地址与更新状态 |
+| GET | `/api/doctor` | 数据目录写入、HTTPS 兼容地址与 native 能力检查 |
+| POST | `/api/check-updates` | 触发桌面端签名自动更新检查（非桌面模式返回 501） |
 | POST | `/api/jobs` | 创建任务 |
 | POST | `/task/create` | 兼容外部切片任务接口（`options.inputPath`/`outputPath`/`settings` → 201 Created） |
 | GET | `/api/jobs` | 任务列表 |

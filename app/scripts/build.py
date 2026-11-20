@@ -758,7 +758,7 @@ def main():
             'if errorlevel 1 pause\n', encoding='ascii', newline='\r\n')
         (resources / 'README-Windows.txt').write_text(
             'Windows x64 完整包：请先解压整个目录，保留 bin、插件、DLL 和 licenses。\n'
-            '便携桌面包：双击 OSGB 转 3D Tiles.exe；不需要安装本应用。\n'
+            '便携桌面包：双击 OSGB 转 3D Tiles.exe，打开桌面界面并自动启用内置 HTTPS 服务（0.0.0.0:42225）。\n'
             '可选个人安装：运行 osgb-tiles-setup-*.exe，默认安装到当前用户的 LocalAppData\\Programs，无需管理员权限。\n'
             '没有 WebView2 或不想安装：运行 Start Browser.cmd；在浏览器手动填写本机路径，按终端 Ctrl+C 停止。\n'
             '若需要桌面窗口，可从微软下载 WebView2 安装器，以普通用户身份运行：\n'

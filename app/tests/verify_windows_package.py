@@ -6,9 +6,12 @@ import json
 import os
 from pathlib import Path
 import shutil
+import ssl
 import subprocess
 import sys
 import tempfile
+import time
+import urllib.request
 
 for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, 'reconfigure'):
@@ -65,9 +68,66 @@ def verify(package):
                 env=env, timeout=60, check=True,
             )
             assert (cn_out / 'tileset.json').is_file(), ('中文路径转换未生成 tileset.json', cn_out)
+
+            # 验证已安装的 GUI exe 在未传 --tls 时也可自动监听内置 HTTPS 兼容端口（/task/create）。
+            https_state = Path(directory) / 'https-state'
+            https_out = Path(directory) / '测试HTTPS输出'
+            https_log = Path(directory) / 'https-service.log'
+            with https_log.open('w+', encoding='utf-8') as log_stream:
+                process = subprocess.Popen(
+                    [str(installed / app_name), '--headless', '--addr', '127.0.0.1:0',
+                     '--https-addr', '127.0.0.1:42225', '--data-dir', str(https_state)],
+                    stdout=log_stream, stderr=subprocess.STDOUT, env=env,
+                )
+                try:
+                    ctx = ssl._create_unverified_context()
+                    deadline = time.monotonic() + 20
+                    while time.monotonic() < deadline:
+                        assert process.poll() is None, ('HTTPS 兼容服务提前退出', https_log.read_text(encoding='utf-8', errors='replace'))
+                        try:
+                            with urllib.request.urlopen('https://127.0.0.1:42225/api/health', context=ctx, timeout=2) as resp:
+                                if resp.status == 200:
+                                    break
+                        except Exception:
+                            time.sleep(0.2)
+                    else:
+                        raise AssertionError('等待 HTTPS /api/health 超时')
+
+                    body = json.dumps({
+                        'options': {
+                            'name': 'windows-https-smoke',
+                            'inputPath': str(cn_in),
+                            'outputPath': str(https_out),
+                            'settings': {'srs': 'ENU:31.2,121.4,10'},
+                        }
+                    }).encode('utf-8')
+                    req = urllib.request.Request(
+                        'https://127.0.0.1:42225/task/create',
+                        data=body,
+                        headers={'Content-Type': 'application/json'},
+                        method='POST',
+                    )
+                    with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
+                        assert resp.status == 201, resp.status
+                    deadline = time.monotonic() + 60
+                    while time.monotonic() < deadline:
+                        if (https_out / 'tileset.json').is_file():
+                            break
+                        time.sleep(0.2)
+                    assert (https_out / 'tileset.json').is_file(), ('HTTPS /task/create 未生成 tileset.json', https_out)
+                finally:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=5)
         # NSIS 的 _?= 必须位于最后且不加引号，确保卸载器同步执行完毕再退出，避免与临时目录清理竞态。
         uninstall_cmd = subprocess.list2cmdline([str(installed / 'Uninstall.exe'), '/S']) + ' _?=' + str(installed)
         subprocess.run(uninstall_cmd, check=True, timeout=60)
+    if os.environ.get('MYGO_UPDATER_PRIVATE_KEY'):
+        assert (package / 'update-windows-amd64.json').is_file(), '缺少 Windows 自动更新清单 update-windows-amd64.json'
+        assert len(list(package.glob('*-windows-amd64.tar.gz'))) == 1, '缺少签名更新压缩包'
     print('Windows 完整便携目录、可选个人安装及卸载检查通过；未验证交互式桌面画面或企业权限策略')
 
 
