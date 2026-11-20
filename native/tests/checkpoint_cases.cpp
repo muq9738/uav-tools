@@ -237,6 +237,29 @@ int main(int argc,char** argv) {
         }
         {Checkpoint reopened(temp/"lock-test",Json{{"task","test"}},true);}
         require(!fs::exists(temp/"lock-test"),"释放锁后可恢复并清理");checks++;
+        Options emptyDest=baseline;emptyDest.output=temp/"empty-existing-out";
+        emptyDest.checkpointDir=temp/"empty-existing-checkpoint";emptyDest.pauseFile=temp/"empty-existing-pause";
+        fs::create_directories(emptyDest.output);
+        auto emptyToken=emptyDest.pauseFile;
+        emptyDest.event=[emptyToken](const Json& event) {
+            if(event.value("stage","")=="convert" && event.at("done").get<unsigned>()>=1) atomicWrite(emptyToken,{});
+        };
+        auto emptyPause=convert(emptyDest);
+        require(emptyPause["status"]=="paused" && assets(emptyDest.output).empty(),"空目标目录暂停前不能发布");
+        fs::remove(emptyDest.pauseFile);emptyDest.event={};emptyDest.resume=true;
+        auto emptyResumed=convert(emptyDest);
+        require(emptyResumed["status"]=="complete" && assets(emptyDest.output)==expected,"预建空目录检查点发布必须成功");checks++;
+        Options trailingSep=baseline;trailingSep.output=temp/"trailing-sep-out/";
+        trailingSep.checkpointDir=temp/"trailing-sep-checkpoint";trailingSep.pauseFile=temp/"trailing-sep-pause";
+        auto trailingToken=trailingSep.pauseFile;
+        trailingSep.event=[trailingToken](const Json& event) {
+            if(event.value("stage","")=="convert" && event.at("done").get<unsigned>()>=1) atomicWrite(trailingToken,{});
+        };
+        auto trailingPause=convert(trailingSep);
+        require(trailingPause["status"]=="paused" && !fs::exists(temp/"trailing-sep-out"),"尾斜杠输出暂停不得发布");
+        fs::remove(trailingSep.pauseFile);trailingSep.event={};trailingSep.resume=true;
+        auto trailingResumed=convert(trailingSep);
+        require(trailingResumed["status"]=="complete" && assets(temp/"trailing-sep-out")==expected,"尾斜杠输出路径发布必须成功");checks++;
         std::cout<<"通过 "<<checks<<" 项检查点回归；真实 fixture: "<<temp<<'\n';return 0;
     } catch(const std::exception& error) {std::cerr<<error.what()<<'\n';return 1;}
 }

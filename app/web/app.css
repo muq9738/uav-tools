@@ -109,6 +109,11 @@ svg { display: block; }
   font-size: 10px;
   line-height: 17px;
 }
+.update-tag {
+  border-color: #6b88df;
+  background: rgba(140, 168, 255, .14);
+  color: #b8cbff;
+}
 .sidebar-bottom { margin-top: auto; display: grid; gap: 14px; }
 .workspace-meta {
   display: flex;

@@ -106,7 +106,9 @@ func (e *Exec) Features() Features {
 		e.features.Path = path
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
-		output, err := exec.CommandContext(ctx, path, "--capabilities").Output()
+		cmd := exec.CommandContext(ctx, path, "--capabilities")
+		configureCommand(cmd)
+		output, err := cmd.Output()
 		if err != nil {
 			detail := err.Error()
 			var exitErr *exec.ExitError
@@ -227,6 +229,7 @@ func (e *Exec) Convert(ctx context.Context, spec jobs.Spec, control jobs.Control
 		args = append(args, "--texture-format", spec.TextureFormat)
 	}
 	command := exec.CommandContext(ctx, features.Path, args...)
+	configureCommand(command)
 	// 各平台使用同一合作取消协议；超过宽限期才由 os/exec 强制结束。
 	command.Cancel = func() error {
 		if err := os.WriteFile(cancelFile, nil, 0o600); err != nil {

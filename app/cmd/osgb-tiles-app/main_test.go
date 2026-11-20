@@ -150,3 +150,57 @@ func TestDualHTTPUIAndHTTPSCompatListener(t *testing.T) {
 		t.Fatalf("UI /api/jobs 未同步展示通过 HTTPS /task/create 提交的任务 %s", created.ID)
 	}
 }
+
+func TestUpdaterStatusInConfigAndDoctor(t *testing.T) {
+	dataDir := t.TempDir()
+	manager, err := jobs.New(jobs.Config{DataDir: dataDir, Runner: noopRunner{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+
+	srv, err := api.New(api.Options{
+		Manager:      manager,
+		Runner:       &runner.Exec{},
+		Web:          web.Files,
+		Version:      "0.6.1",
+		DataDir:      dataDir,
+		CheckUpdates: func() {},
+		UpdaterStatus: func() api.UpdaterInfo {
+			return api.UpdaterInfo{
+				Enabled:          true,
+				AvailableVersion: "0.6.2",
+				TokenConfigured:  true,
+			}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	listener, err := api.Listen("127.0.0.1:0", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpServer := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: time.Second}
+	go httpServer.Serve(listener)
+	defer httpServer.Shutdown(context.Background())
+
+	for _, endpoint := range []string{"/api/config", "/api/doctor"} {
+		resp, err := http.Get("http://" + listener.Addr().String() + endpoint)
+		if err != nil {
+			t.Fatalf("%s 请求失败：%v", endpoint, err)
+		}
+		var payload struct {
+			Updater *api.UpdaterInfo `json:"updater"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+			resp.Body.Close()
+			t.Fatalf("解析 %s 响应失败：%v", endpoint, err)
+		}
+		resp.Body.Close()
+		if payload.Updater == nil || !payload.Updater.Enabled || !payload.Updater.TokenConfigured || payload.Updater.AvailableVersion != "0.6.2" {
+			t.Fatalf("%s updater 状态不符合预期：%+v", endpoint, payload.Updater)
+		}
+	}
+}

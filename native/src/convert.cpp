@@ -27,14 +27,18 @@
 #include <sstream>
 #include <stdexcept>
 #include <thread>
+#include <vector>
 #ifdef __APPLE__
 #include <mach/mach.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #elif defined(__linux__)
+#include <sys/stat.h>
 #include <unistd.h>
 #elif defined(_WIN32)
 #include <windows.h>
 #include <psapi.h>
+#include <wchar.h>
 #endif
 
 namespace nt {
@@ -97,6 +101,100 @@ struct Pending {
     std::vector<External> dependencies;
 };
 struct FileResult {fs::path file;osg::BoundingBoxd bounds;double error=0;Json root;};
+fs::path stripTrailingSeparator(fs::path p) {
+    while(!p.empty() && p.filename().empty() && p!=p.root_path()) {
+        auto parent=p.parent_path();
+        if(parent==p) break;
+        p=std::move(parent);
+    }
+    return p;
+}
+bool sameVolume(const fs::path& a,const fs::path& b) {
+#ifdef _WIN32
+    auto volumeOf=[](const fs::path& p)->std::wstring {
+        std::wstring abs=fs::absolute(p).native();
+        std::vector<wchar_t> buf(std::max<std::size_t>(abs.size()+64,512),L'\0');
+        if(GetVolumePathNameW(abs.c_str(),buf.data(),static_cast<DWORD>(buf.size()))) return std::wstring(buf.data());
+        return fs::absolute(p).root_name().native();
+    };
+    auto va=volumeOf(a),vb=volumeOf(b);
+    if(va.empty() || vb.empty()) return false;
+    return _wcsicmp(va.c_str(),vb.c_str())==0;
+#else
+    struct stat sa{},sb{};
+    std::error_code ec;
+    auto pa=fs::exists(a,ec)?a:a.parent_path();
+    auto pb=fs::exists(b,ec)?b:b.parent_path();
+    if(pa.empty() || pb.empty()) return false;
+    if(::stat(pa.c_str(),&sa)!=0 || ::stat(pb.c_str(),&sb)!=0) return false;
+    return sa.st_dev==sb.st_dev;
+#endif
+}
+bool isRetryableWindowsFsError(const std::error_code& error) {
+#ifdef _WIN32
+    return error.value()==ERROR_ACCESS_DENIED || error.value()==ERROR_SHARING_VIOLATION;
+#else
+    (void)error;
+    return false;
+#endif
+}
+bool isCrossDeviceOrWindowsDirRenameError(const std::error_code& error) {
+    if(error==std::errc::cross_device_link) return true;
+#ifdef _WIN32
+    return error.value()==ERROR_NOT_SAME_DEVICE || error.value()==ERROR_ACCESS_DENIED;
+#else
+    return false;
+#endif
+}
+template <typename Op>
+void retryWindowsFsOp(Op&& op,std::error_code& error,const std::function<void()>& check) {
+    op(error);
+    for(int attempt=0;attempt<20 && isRetryableWindowsFsError(error);++attempt) {
+        if(check) check();
+        std::this_thread::sleep_for(std::chrono::milliseconds(std::min(250,50*(attempt+1))));
+        error.clear();
+        op(error);
+    }
+}
+void renameWithRetry(const fs::path& from,const fs::path& to,std::error_code& error,const std::function<void()>& check={}) {
+    retryWindowsFsOp([&](std::error_code& ec) {fs::rename(from,to,ec);},error,check);
+}
+void removeEmptyDirWithRetry(const fs::path& dir,std::error_code& error,const std::function<void()>& check={}) {
+    retryWindowsFsOp([&](std::error_code& ec) {fs::remove(dir,ec);},error,check);
+}
+void publishIntoExistingEmptyDir(const fs::path& source,const fs::path& destination,const std::function<void()>& check) {
+    if(!fs::is_directory(destination) || !fs::is_empty(destination))
+        throw std::runtime_error("发布前输出目录被占用，拒绝覆盖");
+    std::vector<fs::path> entries;
+    bool hasReport=false,hasTileset=false;
+    for(const auto& item:fs::directory_iterator(source)) {
+        auto name=item.path().filename().u8string();
+        if(name=="tileset.json") {hasTileset=true;continue;}
+        if(name=="conversion-report.json") {hasReport=true;continue;}
+        entries.push_back(item.path().filename());
+    }
+    std::sort(entries.begin(),entries.end());
+    if(hasReport) entries.push_back(fs::u8path("conversion-report.json"));
+    if(hasTileset) entries.push_back(fs::u8path("tileset.json"));
+    std::vector<fs::path> moved;
+    try {
+        for(const auto& name:entries) {
+            if(check) check();
+            std::error_code error;
+            renameWithRetry(source/name,destination/name,error,check);
+            if(error) throw fs::filesystem_error("无法发布转换结果",source/name,destination/name,error);
+            moved.push_back(name);
+        }
+    } catch(...) {
+        // tileset.json 最后移入；出错时回滚已移入条目，避免输出目录残留半成品。
+        for(auto it=moved.rbegin();it!=moved.rend();++it) {
+            std::error_code undoErr;
+            fs::rename(destination/(*it),source/(*it),undoErr);
+            if(undoErr) fs::remove_all(destination/(*it),undoErr);
+        }
+        throw;
+    }
+}
 // 仅持有本次创建的暂存目录；失败清理自身产物，完成后整体发布，允许原路径直接重跑。
 class OutputTransaction {
     fs::path destination_,staging_,publication_;bool committed_=false,keep_=false;
@@ -104,11 +202,28 @@ class OutputTransaction {
         if(fs::exists(destination_) && (!fs::is_directory(destination_) || !fs::is_empty(destination_)))
             throw std::runtime_error("发布前输出目录被占用，拒绝覆盖");
     }
+    bool publishStagedDir(const fs::path& staged,const std::function<void()>& check,std::error_code& error) {
+        if(fs::exists(destination_)) {
+            std::error_code rmError;
+            removeEmptyDirWithRetry(destination_,rmError,check);
+            if(rmError) {
+                if(isRetryableWindowsFsError(rmError) && fs::is_directory(destination_) && fs::is_empty(destination_)) {
+                    publishIntoExistingEmptyDir(staged,destination_,check);
+                    return true;
+                }
+                error=rmError;
+                return false;
+            }
+        }
+        renameWithRetry(staged,destination_,error,check);
+        return !error;
+    }
 public:
-    explicit OutputTransaction(const fs::path& destination,const fs::path& retained={}):destination_(destination) {
-        fs::create_directories(destination.parent_path());
+    explicit OutputTransaction(const fs::path& destination,const fs::path& retained={}):destination_(stripTrailingSeparator(destination)) {
+        auto parent=destination_.parent_path().empty()?fs::path("."):destination_.parent_path();
+        fs::create_directories(parent);
         auto stamp=std::chrono::steady_clock::now().time_since_epoch().count();
-        publication_=destination.parent_path()/fs::u8path("."+destination.filename().u8string()+".building-"+std::to_string(stamp));
+        publication_=parent/fs::u8path("."+destination_.filename().u8string()+".building-"+std::to_string(stamp));
         staging_=retained.empty()?publication_:retained;
         if(retained.empty() && !fs::create_directory(staging_)) throw std::runtime_error("无法创建独立转换暂存目录");
     }
@@ -121,20 +236,34 @@ public:
     void preserve() {keep_=true;}
     void commit(const std::function<void()>& check={},const std::function<void()>& beforePublish={}) {
         if(check) check();if(beforePublish) beforePublish();if(check) check();checkDestination();
-        if(fs::exists(destination_)) fs::remove(destination_);
-        std::error_code error;fs::rename(staging_,destination_,error);
-        if(error==std::errc::cross_device_link) {
+        const auto parent=destination_.parent_path().empty()?fs::path("."):destination_.parent_path();
+        const bool onSameVolume=sameVolume(staging_,parent);
+        std::error_code error;
+        if(onSameVolume && publishStagedDir(staging_,check,error)) {
+            std::error_code cleanupError;
+            fs::remove_all(staging_,cleanupError);
+            committed_=true;
+            return;
+        }
+        if(!onSameVolume || (staging_!=publication_ && isCrossDeviceOrWindowsDirRenameError(error))) {
             if(!fs::create_directory(publication_)) throw std::runtime_error("无法创建发布暂存目录");
             for(const auto& file:fs::recursive_directory_iterator(staging_)) {
-                if(check) check();auto target=publication_/file.path().lexically_relative(staging_);
-                if(file.is_directory()) fs::create_directory(target);
+                if(check) check();
+                auto target=publication_/file.path().lexically_relative(staging_);
+                if(file.is_directory()) fs::create_directories(target);
                 else {fs::create_directories(target.parent_path());fs::copy_file(file.path(),target);}
             }
             if(check) check();if(beforePublish) beforePublish();if(check) check();checkDestination();
-            if(fs::exists(destination_)) fs::remove(destination_);
-            fs::rename(publication_,destination_);std::error_code cleanupError;fs::remove_all(staging_,cleanupError);
-        } else if(error) throw fs::filesystem_error("无法发布转换结果",staging_,destination_,error);
-        committed_=true;
+            std::error_code publishError;
+            if(!publishStagedDir(publication_,check,publishError)) {
+                throw fs::filesystem_error("无法发布转换结果",publication_,destination_,publishError);
+            }
+            std::error_code cleanupError;
+            fs::remove_all(staging_,cleanupError);
+            committed_=true;
+            return;
+        }
+        throw fs::filesystem_error("无法发布转换结果",staging_,destination_,error);
     }
 };
 struct PauseRequested {};
@@ -531,9 +660,9 @@ Json convert(const Options& requested) {
     if(options.checkpointDir.empty() && (options.resume || !options.pauseFile.empty())) throw std::runtime_error("--resume/--pause-file 需要 --checkpoint-dir");
     if(options.checkpointDir.empty() && options.checkCancelled) options.checkCancelled();
     emit({{"type","progress"},{"stage","scan"},{"done",0},{"total",0},{"unit","files"}});
-    options.input=fs::canonical(options.input);options.output=fs::absolute(options.output).lexically_normal();
+    options.input=fs::canonical(options.input);options.output=stripTrailingSeparator(fs::absolute(options.output).lexically_normal());
     if(!options.checkpointDir.empty()) {
-        options.output=fs::weakly_canonical(options.output);
+        options.output=stripTrailingSeparator(fs::weakly_canonical(options.output));
         if(fs::is_symlink(fs::symlink_status(options.checkpointDir))) throw std::runtime_error("检查点目录不能是符号链接");
         options.checkpointDir=fs::weakly_canonical(fs::absolute(options.checkpointDir));
         if(pathContains(options.checkpointDir,options.output) || pathContains(options.output,options.checkpointDir) || pathContains(options.checkpointDir,options.input))
@@ -700,7 +829,10 @@ Json convert(const Options& requested) {
                 if(readBytes(destination)!=readBytes(item.path())) throw std::runtime_error("Top asset collides with source asset");
             } else {
                 derivedAssets[relative.generic_u8string()]=fileIdentity(item.path());
-                fs::create_directories(destination.parent_path());fs::rename(item.path(),destination);
+                fs::create_directories(destination.parent_path());
+                std::error_code renameError;
+                renameWithRetry(item.path(),destination,renameError);
+                if(renameError) throw fs::filesystem_error("无法发布顶层重构资产",item.path(),destination,renameError);
             }
         }
         fs::remove_all(topStaging);
@@ -725,7 +857,9 @@ Json convert(const Options& requested) {
         for(const auto& item:fs::recursive_directory_iterator(previewStaging)) if(item.is_regular_file()) {
             auto relative=item.path().lexically_relative(previewStaging);derivedAssets[(fs::path("preview")/relative).generic_u8string()]=fileIdentity(item.path());
         }
-        fs::rename(previewStaging,options.output/"preview");
+        std::error_code previewRenameError;
+        renameWithRetry(previewStaging,options.output/"preview",previewRenameError);
+        if(previewRenameError) throw fs::filesystem_error("无法发布轻量预览目录",previewStaging,options.output/"preview",previewRenameError);
         auto previewGlbs=previewReport.at("glbs").get<std::uint64_t>();
         emit({{"type","progress"},{"stage","preview"},{"done",previewGlbs},{"total",previewGlbs},{"unit","files"}});
     }

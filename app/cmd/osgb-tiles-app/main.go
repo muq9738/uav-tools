@@ -17,6 +17,8 @@ import (
 	"os/signal"
 	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -32,7 +34,7 @@ import (
 const defaultCompatHTTPSAddr = "0.0.0.0:42225"
 
 // version 由构建参数覆盖。
-var version = "0.6.0"
+var version = "0.6.1"
 
 func appVersion() string {
 	if v := strings.TrimSpace(mygo.App.Version()); v != "" && v != "0.0.0" {
@@ -157,11 +159,14 @@ func run() error {
 
 	var picker *desktop.Picker
 	var checkUpdates func()
+	var updaterStatus func() api.UpdaterInfo
 	if !*headless && !*browser {
 		picker = &desktop.Picker{}
 		if token := strings.TrimSpace(updateGitHubToken); token != "" {
 			mygo.Updater.SetSource(newGitHubTokenSource(updateGitHubRepo, token))
 		}
+		var updaterReady atomic.Bool
+		mygo.App.WhenReady(func() { updaterReady.Store(true) })
 		mygo.Use(updater.Plugin)
 		if runtime.GOOS == "darwin" {
 			mygo.App.SetMenu(mygo.NewMenu([]*mygo.MenuItem{
@@ -175,7 +180,23 @@ func run() error {
 				{Role: mygo.RoleWindowMenu},
 			}))
 		}
-		checkUpdates = updater.CheckForUpdates
+		checkUpdates = func() {
+			if !updaterReady.Load() {
+				return
+			}
+			updater.CheckForUpdates()
+		}
+		updaterStatus = func() api.UpdaterInfo {
+			available := ""
+			if updaterReady.Load() {
+				available = updater.AvailableVersion()
+			}
+			return api.UpdaterInfo{
+				Enabled:          mygo.Updater.Enabled(),
+				AvailableVersion: available,
+				TokenConfigured:  strings.TrimSpace(updateGitHubToken) != "",
+			}
+		}
 	}
 	enableTLS := *useTLS || *tlsCert != "" || *tlsKey != ""
 	compatHTTPSAddr := resolveCompatHTTPSAddr(*httpsAddr, *addr, *headless, enableTLS)
@@ -184,16 +205,17 @@ func run() error {
 		activeHTTPSAddr = *addr
 	}
 	options := api.Options{
-		Manager:      manager,
-		Runner:       converter,
-		Web:          web.Files,
-		Version:      currentVersion,
-		Token:        *token,
-		DataDir:      *dataDir,
-		MaxParallel:  *maxParallel,
-		Desktop:      picker != nil,
-		HTTPSAddr:    activeHTTPSAddr,
-		CheckUpdates: checkUpdates,
+		Manager:       manager,
+		Runner:        converter,
+		Web:           web.Files,
+		Version:       currentVersion,
+		Token:         *token,
+		DataDir:       *dataDir,
+		MaxParallel:   *maxParallel,
+		Desktop:       picker != nil,
+		HTTPSAddr:     activeHTTPSAddr,
+		CheckUpdates:  checkUpdates,
+		UpdaterStatus: updaterStatus,
 	}
 	if picker != nil {
 		options.Picker = picker.Pick
@@ -223,26 +245,43 @@ func run() error {
 			cancel()
 		}
 	}()
-	defer func() {
-		shutdown, stop := context.WithTimeout(context.Background(), 5*time.Second)
-		defer stop()
-		httpServer.Shutdown(shutdown)
-	}()
+
+	var compatServer *http.Server
+	var shutdownOnce sync.Once
+	shutdownResources := func() {
+		shutdownOnce.Do(func() {
+			cancel()
+			if compatServer != nil {
+				shutdown, stop := context.WithTimeout(context.Background(), time.Second)
+				if err := compatServer.Shutdown(shutdown); err != nil {
+					_ = compatServer.Close()
+				}
+				stop()
+			}
+			shutdown, stop := context.WithTimeout(context.Background(), time.Second)
+			if err := httpServer.Shutdown(shutdown); err != nil {
+				_ = httpServer.Close()
+			}
+			stop()
+			manager.Close()
+		})
+	}
+	defer shutdownResources()
 
 	if compatHTTPSAddr != "" {
-		compatServer, compatBound, certSource, err := startHTTPSCompatServer(server.Handler(), compatHTTPSAddr, *token, *tlsCert, *tlsKey, *dataDir, func(err error) {
+		srv, compatBound, certSource, err := startHTTPSCompatServer(server.Handler(), compatHTTPSAddr, *token, *tlsCert, *tlsKey, *dataDir, func(err error) {
 			log.Printf("内置 HTTPS 切片服务结束：%v", err)
 			cancel()
 		})
 		if err != nil {
 			return err
 		}
+		compatServer = srv
 		log.Printf("内置 HTTPS 切片兼容服务已监听：https://%s（证书：%s）", compatBound.String(), certSource)
-		defer func() {
-			shutdown, stop := context.WithTimeout(context.Background(), 5*time.Second)
-			defer stop()
-			compatServer.Shutdown(shutdown)
-		}()
+	}
+	if picker != nil {
+		// 热更新 Relaunch 在 OnQuit 之后重启新进程，必须提前释放数据目录锁与 42225 端口。
+		mygo.App.OnQuit(shutdownResources)
 	}
 
 	url := pageURL(listener.Addr(), *token, enableTLS)

@@ -22,6 +22,13 @@ import (
 	"github.com/muq9738/uav-tools/app/internal/runner"
 )
 
+// UpdaterInfo 报告应用内签名自动更新的状态。
+type UpdaterInfo struct {
+	Enabled          bool   `json:"enabled"`
+	AvailableVersion string `json:"availableVersion,omitempty"`
+	TokenConfigured  bool   `json:"tokenConfigured"`
+}
+
 // Options 配置 Server。
 type Options struct {
 	Manager     *jobs.Manager
@@ -39,6 +46,8 @@ type Options struct {
 	Reveal func(path string) error
 	// CheckUpdates 只在桌面打包模式下提供，触发版本检查窗口。
 	CheckUpdates func()
+	// UpdaterStatus 返回自动更新当前配置与检测到的最新版本。
+	UpdaterStatus func() UpdaterInfo
 }
 
 type runnerFeatures interface {
@@ -138,7 +147,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
+	payload := map[string]any{
 		"version":          s.options.Version,
 		"desktop":          s.options.Desktop,
 		"httpsAddr":        s.options.HTTPSAddr,
@@ -148,7 +157,11 @@ func (s *Server) handleConfig(w http.ResponseWriter, _ *http.Request) {
 		"maxParallel":      s.options.MaxParallel,
 		"dataDir":          s.options.DataDir,
 		"sidecar":          s.options.Runner.Features(),
-	})
+	}
+	if s.options.UpdaterStatus != nil {
+		payload["updater"] = s.options.UpdaterStatus()
+	}
+	writeJSON(w, http.StatusOK, payload)
 }
 
 func (s *Server) handleDoctor(w http.ResponseWriter, _ *http.Request) {
@@ -163,7 +176,7 @@ func (s *Server) handleDoctor(w http.ResponseWriter, _ *http.Request) {
 			}
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	payload := map[string]any{
 		"version":         s.options.Version,
 		"platform":        runtime.GOOS + "/" + runtime.GOARCH,
 		"dataDir":         s.options.DataDir,
@@ -171,7 +184,11 @@ func (s *Server) handleDoctor(w http.ResponseWriter, _ *http.Request) {
 		"httpsAddr":       s.options.HTTPSAddr,
 		"sidecar":         features,
 		"note":            "转换器为按平台打包的独立二进制；App 与命令行共用随包 native 和 SDK 运行时。",
-	})
+	}
+	if s.options.UpdaterStatus != nil {
+		payload["updater"] = s.options.UpdaterStatus()
+	}
+	writeJSON(w, http.StatusOK, payload)
 }
 
 func (s *Server) handleCheckUpdates(w http.ResponseWriter, _ *http.Request) {

@@ -600,6 +600,38 @@ for (const button of document.querySelectorAll('.rail-item')) {
   })
 }
 
+function formatUpdaterStatus(updater) {
+  if (!updater) return state.config?.updaterAvailable ? '已启用' : '未启用'
+  if (!updater.enabled) return '当前安装方式不支持自更新（请检查安装目录写权限）'
+  const auth = updater.tokenConfigured ? '已内置只读 GitHub 令牌' : 'GitHub 公开访问'
+  if (updater.availableVersion) return `发现新版本 v${updater.availableVersion}（${auth}）`
+  return `已启用（${auth}）`
+}
+
+function syncUpdaterUI(updaterInfo) {
+  const available = Boolean(state.config?.updaterAvailable)
+  if ($('#check-updates')) $('#check-updates').hidden = !available
+  if ($('#sidebar-update')) $('#sidebar-update').hidden = !available
+  const tag = $('#sidebar-update-tag')
+  if (tag) {
+    if (available && updaterInfo?.availableVersion) {
+      tag.textContent = 'v' + updaterInfo.availableVersion
+      tag.hidden = false
+    } else {
+      tag.hidden = true
+    }
+  }
+}
+
+async function triggerUpdateCheck() {
+  try {
+    await api('/api/check-updates', { method: 'POST' })
+    notify('已打开更新检查窗口')
+  } catch (error) {
+    notify('检查更新失败：' + error.message, true)
+  }
+}
+
 async function loadDoctor() {
   const container = $('#doctor-body')
   try {
@@ -609,12 +641,14 @@ async function loadDoctor() {
       ['应用版本', report.version],
       ['系统', report.platform],
       ['HTTPS 切片服务', report.httpsAddr ? 'https://' + report.httpsAddr : '未启用'],
+      ['自动更新', formatUpdaterStatus(report.updater)],
       ['数据目录', report.dataDir],
       ['转换器', sidecar.path || '未找到'],
       ['进度来源', sidecar.jsonEvents ? '结构化事件' : '输出文件估算'],
       ['写入权限', report.dataDirWritable ? '可写' : '不可写'],
       ['暂停 / 继续', sidecar.available && sidecar.pauseResume ? '支持' : '不支持'],
     ]
+    syncUpdaterUI(report.updater)
     container.replaceChildren(...rows.map(([key, value]) => {
       const item = document.createElement('div')
       item.className = 'row-item'
@@ -670,15 +704,17 @@ async function bootstrap() {
     if (state.config.version && $('#app-version')) {
       $('#app-version').textContent = 'v' + state.config.version
     }
-    if (state.config.updaterAvailable && $('#check-updates')) {
-      $('#check-updates').hidden = false
-      $('#check-updates').addEventListener('click', async () => {
+    syncUpdaterUI(state.config.updater)
+    if (state.config.updaterAvailable) {
+      if ($('#check-updates')) $('#check-updates').addEventListener('click', triggerUpdateCheck)
+      if ($('#sidebar-update')) $('#sidebar-update').addEventListener('click', triggerUpdateCheck)
+      setTimeout(async () => {
         try {
-          await api('/api/check-updates', { method: 'POST' })
-        } catch (error) {
-          notify('检查更新失败：' + error.message, true)
-        }
-      })
+          const latest = await api('/api/config')
+          state.config = latest
+          syncUpdaterUI(latest.updater)
+        } catch {}
+      }, 15000)
     }
     const sidecar = state.config.sidecar || {}
     for (const option of $('#geometry').options) {
