@@ -108,7 +108,14 @@ func (e *Exec) Features() Features {
 		defer cancel()
 		output, err := exec.CommandContext(ctx, path, "--capabilities").Output()
 		if err != nil {
-			e.features.Detail = "无法读取 native 契约：" + err.Error()
+			detail := err.Error()
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
+				if stderr := strings.TrimSpace(string(exitErr.Stderr)); stderr != "" {
+					detail += "（" + stderr + "）"
+				}
+			}
+			e.features.Detail = "无法读取 native 契约：" + detail
 			return
 		}
 		var capability Features

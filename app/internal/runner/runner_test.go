@@ -64,6 +64,10 @@ func TestFeaturesRejectsMismatchedNative(t *testing.T) {
 	if missing.Available {
 		t.Fatal("指定路径缺失不能回退其他转换器")
 	}
+	failed := (&Exec{Binary: writeScript(t, "echo 'UTF-8 路径诊断失败' >&2\nexit 1\n")}).Features()
+	if failed.Available || !strings.Contains(failed.Detail, "UTF-8 路径诊断失败") {
+		t.Fatalf("应透传 --capabilities 失败的 stderr：%v", failed)
+	}
 }
 
 func TestConvertPassesOptionsAndUsesNativeProgress(t *testing.T) {

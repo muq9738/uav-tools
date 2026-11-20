@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -35,6 +36,10 @@ def verify(package):
             assert (folder / name).is_file(), ('缺少启动资源', folder / name)
         result = subprocess.check_output([str(folder / app_name), '--doctor'], env=env, timeout=30)
         assert '可用：true' in result.decode('utf-8'), result
+        browser_result = subprocess.check_output([str(folder / 'osgb-tiles-browser.exe'), '--doctor'], env=env, timeout=30)
+        assert '可用：true' in browser_result.decode('utf-8'), browser_result
+        exe_bytes = (folder / 'bin/osgb-tiles.exe').read_bytes()
+        assert b'activeCodePage' in exe_bytes and b'UTF-8' in exe_bytes, '缺少 UTF-8 activeCodePage manifest'
         capabilities = json.loads(subprocess.check_output(
             [str(folder / 'bin/osgb-tiles.exe'), '--capabilities'], env=env, timeout=30))
         assert capabilities['protocolVersion'] == 1, capabilities
@@ -43,11 +48,23 @@ def verify(package):
     installers = list(package.glob('*-setup-*.exe'))
     assert len(installers) == 1, ('需要一个可选个人安装包', installers)
     with tempfile.TemporaryDirectory(prefix='osgb-user-install-') as directory:
-        installed = Path(directory) / 'OSGB User App'
+        installed = Path(directory) / 'OSGB 转 3D Tiles 不乱码'
         # NSIS 的 /D= 必须位于最后，包含空格时也不能给路径加引号。
         command = subprocess.list2cmdline([str(installers[0]), '/S']) + ' /D=' + str(installed)
         subprocess.run(command, check=True, timeout=120)
         check(installed)
+        sample = next((module_path.parents[1] / 'build').glob('*/test-data-*/texture+alpha.osgb'), None)
+        if sample is not None:
+            cn_in_dir = Path(directory) / '测试输入目录'
+            cn_in_dir.mkdir(parents=True, exist_ok=True)
+            cn_in = cn_in_dir / '测试模型.osgb'
+            shutil.copy2(sample, cn_in)
+            cn_out = Path(directory) / '测试输出目录'
+            subprocess.run(
+                [str(installed / 'bin/osgb-tiles.exe'), str(cn_in), str(cn_out), '--srs', 'ENU:31.2,121.4,10'],
+                env=env, timeout=60, check=True,
+            )
+            assert (cn_out / 'tileset.json').is_file(), ('中文路径转换未生成 tileset.json', cn_out)
         # NSIS 的 _?= 必须位于最后且不加引号，确保卸载器同步执行完毕再退出，避免与临时目录清理竞态。
         uninstall_cmd = subprocess.list2cmdline([str(installed / 'Uninstall.exe'), '/S']) + ' _?=' + str(installed)
         subprocess.run(uninstall_cmd, check=True, timeout=60)

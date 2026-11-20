@@ -21,7 +21,7 @@ int runMain(int argc,char** argv) {
     bool events=false;
     try {
         if(argc==2 && std::string(argv[1])=="--capabilities") {
-            nt::configureRuntime(argv[0]);std::cout<<nt::capabilities().dump()<<'\n';return 0;
+            nt::configureRuntime(nt::fs::u8path(argv[0]));std::cout<<nt::capabilities().dump()<<'\n';return 0;
         }
         if(argc<3) {
             std::cout<<"用法: osgb-tiles INPUT OUTPUT [--threads N] [--memory-budget MIB] [--srs ENU:纬度,经度,高度] [--origin x,y,z] [--geometry raw|meshopt|draco] [--draco-speed 0|5|10] [--texture-format original|uastc|etc1s] [--texture-pixels] [--rebuild-top] [--top-seal-distance METERS] [--preview] [--json-events] [--cancel-file PATH] [--checkpoint-dir PATH] [--pause-file PATH] [--resume]\n"
@@ -78,7 +78,7 @@ int runMain(int argc,char** argv) {
             if(interrupted || (!cancelFile.empty() && nt::fs::exists(cancelFile))) throw std::runtime_error("转换已取消");
         };
         if(events) options.event=[](const nt::Json& event) {std::cout<<event.dump()<<'\n'<<std::flush;};
-        nt::configureRuntime(argv[0]);osg::setNotifyLevel(osg::WARN);
+        nt::configureRuntime(nt::fs::u8path(argv[0]));osg::setNotifyLevel(osg::WARN);
         auto report=nt::convert(options);report.erase("records");
         if(events) std::cout<<nt::Json({{"type","result"},{"report",report}}).dump()<<'\n';
         else std::cout<<report.dump(2)<<'\n';

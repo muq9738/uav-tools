@@ -168,11 +168,11 @@ Checkpoint::Checkpoint(const fs::path& directory,const Json& identity,bool resum
         if(fs::is_symlink(file.symlink_status()) || (!file.is_directory() && !file.is_regular_file())) throw std::runtime_error("检查点含非普通文件: "+file.path().u8string());
     }
     for(const auto& file:fs::directory_iterator(directory)) {
-        auto name=file.path().filename().string();
+        auto name=file.path().filename().u8string();
         if(name!=".lock" && name!="identity.json" && name!="state.json" && name!="entries" && name!="work") throw std::runtime_error("检查点含未知记录: "+name);
     }
     for(const auto& file:fs::directory_iterator(directory/"entries")) {
-        auto key=file.path().stem().string();
+        auto key=file.path().stem().u8string();
         if(file.path().extension()!=".json" || !validKey(key)) throw std::runtime_error("检查点含不完整记录");
         auto entry=unseal(file.path());
         if(!p.state.at("entries").contains(key) || p.state.at("entries").at(key)!=sha256(entry.dump())) throw std::runtime_error("检查点总账与文件记录不一致");

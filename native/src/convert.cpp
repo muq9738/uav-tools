@@ -357,7 +357,7 @@ struct Engine {
             }
         } // 在进入子文件前释放源节点；跨文件矩阵在投影前应用，避免误把 ENU 结果乘 UTM 矩阵。
         Json record={{"source",file.u8string()},{"sourceBytes",fs::file_size(file)},
-                     {"sourceTransform",matrixValues},{"tileset","tiles/"+manifest.filename().string()},{"content",contents}};
+                     {"sourceTransform",matrixValues},{"tileset","tiles/"+manifest.filename().u8string()},{"content",contents}};
         if(resume && saved.is_null()) {
             resume->checkSource(file);Json references=Json::array();
             for(const auto& ref:pending.external) references.push_back({{"file",ref.file.u8string()},
@@ -467,11 +467,11 @@ std::vector<fs::path> roots(const fs::path& input) {
     auto directory=fs::exists(input/"Data")?input/"Data":(fs::exists(input/"data")?input/"data":input);
     std::vector<fs::path> result;
     for(const auto& e:fs::directory_iterator(directory))
-        if(e.is_regular_file() && lower(e.path().extension().string())==".osgb") result.push_back(fs::canonical(e.path()));
+        if(e.is_regular_file() && lower(e.path().extension().u8string())==".osgb") result.push_back(fs::canonical(e.path()));
     if(result.empty()) for(const auto& e:fs::directory_iterator(directory)) if(e.is_directory()) {
         std::vector<fs::path> matches;
         for(const auto& f:fs::directory_iterator(e.path()))
-            if(f.is_regular_file() && lower(f.path().extension().string())==".osgb" && lower(f.path().stem().u8string())==lower(e.path().filename().u8string()))
+            if(f.is_regular_file() && lower(f.path().extension().u8string())==".osgb" && lower(f.path().stem().u8string())==lower(e.path().filename().u8string()))
                 matches.push_back(fs::canonical(f.path()));
         if(matches.size()>1) throw std::runtime_error("块目录含多个仅大小写不同的入口: "+e.path().u8string());
         if(!matches.empty()) result.push_back(matches[0]);

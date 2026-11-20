@@ -29,17 +29,18 @@ Json capabilities() {
 }
 namespace {
 fs::path executablePath(const fs::path& executable) {
-    fs::path actual=executable.empty()?fs::path():fs::absolute(executable);
+    fs::path actual;
 #ifdef _WIN32
     std::wstring path(32768,L'\0');auto size=GetModuleFileNameW(nullptr,path.data(),static_cast<DWORD>(path.size()));
     if(size>0 && size<path.size()) {path.resize(size);actual=path;}
 #elif defined(__APPLE__)
     std::uint32_t size=0;_NSGetExecutablePath(nullptr,&size);std::string path(size,'\0');
-    if(_NSGetExecutablePath(path.data(),&size)==0) actual=fs::canonical(path.c_str());
+    if(_NSGetExecutablePath(path.data(),&size)==0) actual=fs::canonical(fs::u8path(path.c_str()));
 #elif defined(__linux__)
     std::string path(4096,'\0');auto size=readlink("/proc/self/exe",path.data(),path.size());
-    if(size>0 && static_cast<std::size_t>(size)<path.size()) {path.resize(size);actual=path;}
+    if(size>0 && static_cast<std::size_t>(size)<path.size()) {path.resize(size);actual=fs::u8path(path);}
 #endif
+    if(actual.empty() && !executable.empty()) actual=fs::absolute(executable);
     if(actual.empty()) throw std::runtime_error("无法确定转换器二进制身份");
     return actual;
 }
