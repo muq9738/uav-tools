@@ -50,7 +50,7 @@ jobs:
       matrix:
         include:
           - { os: "windows-2022", platform: "windows-amd64", go: "windows/amd64" }
-          - { os: "macos-14", platform: "darwin-arm64", go: "darwin/arm64" }
+          - { os: "macos-15", platform: "darwin-arm64", go: "darwin/arm64" }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
