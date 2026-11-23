@@ -14,8 +14,118 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
+
+// NewDualProtocolListener 在同一 TCP 端口同时接受明文 HTTP 与 TLS HTTPS 连接。
+// 在连接首次 Read 时嗅探首字节（0x16 为 TLS ClientHello），避免在 Accept 阶段阻塞其他连接。
+func NewDualProtocolListener(inner net.Listener, tlsConfig *tls.Config) net.Listener {
+	return &dualProtocolListener{
+		Listener:  inner,
+		tlsConfig: tlsConfig,
+	}
+}
+
+type dualProtocolListener struct {
+	net.Listener
+	tlsConfig *tls.Config
+}
+
+func (l *dualProtocolListener) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return &dualProtocolConn{
+		raw:       conn,
+		tlsConfig: l.tlsConfig,
+	}, nil
+}
+
+type dualProtocolConn struct {
+	raw       net.Conn
+	tlsConfig *tls.Config
+
+	mu     sync.Mutex
+	active net.Conn
+}
+
+func (c *dualProtocolConn) getActive() net.Conn {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.active
+}
+
+func (c *dualProtocolConn) Read(p []byte) (int, error) {
+	active := c.getActive()
+	if active == nil {
+		var first [1]byte
+		n, err := c.raw.Read(first[:])
+		if n == 0 {
+			return 0, err
+		}
+		prefixed := &prefixConn{Conn: c.raw, first: first[0], unread: true}
+		var chosen net.Conn = prefixed
+		if first[0] == 0x16 {
+			chosen = tls.Server(prefixed, c.tlsConfig)
+		}
+		c.mu.Lock()
+		if c.active == nil {
+			c.active = chosen
+		}
+		active = c.active
+		c.mu.Unlock()
+		if err != nil && first[0] != 0x16 {
+			// 明文连接在读到首字节的同时遇到 EOF，仍先把首字节交给上层。
+			if len(p) > 0 {
+				p[0] = first[0]
+				prefixed.unread = false
+				return 1, err
+			}
+			return 0, err
+		}
+	}
+	return active.Read(p)
+}
+
+func (c *dualProtocolConn) Write(p []byte) (int, error) {
+	if active := c.getActive(); active != nil {
+		return active.Write(p)
+	}
+	return c.raw.Write(p)
+}
+
+func (c *dualProtocolConn) Close() error {
+	if active := c.getActive(); active != nil {
+		return active.Close()
+	}
+	return c.raw.Close()
+}
+
+func (c *dualProtocolConn) LocalAddr() net.Addr                { return c.raw.LocalAddr() }
+func (c *dualProtocolConn) RemoteAddr() net.Addr               { return c.raw.RemoteAddr() }
+func (c *dualProtocolConn) SetDeadline(t time.Time) error      { return c.raw.SetDeadline(t) }
+func (c *dualProtocolConn) SetReadDeadline(t time.Time) error  { return c.raw.SetReadDeadline(t) }
+func (c *dualProtocolConn) SetWriteDeadline(t time.Time) error { return c.raw.SetWriteDeadline(t) }
+
+type prefixConn struct {
+	net.Conn
+	first  byte
+	unread bool
+}
+
+func (c *prefixConn) Read(p []byte) (int, error) {
+	if c.unread {
+		if len(p) == 0 {
+			return 0, nil
+		}
+		p[0] = c.first
+		c.unread = false
+		return 1, nil
+	}
+	return c.Conn.Read(p)
+}
 
 // LoadOrGenerateTLSConfig 加载指定的 PEM 证书与私钥，或自动生成并持久化自签 ECDSA 证书。
 // 直接使用 Go 标准库 crypto/tls，无需额外打包 Caddy/Nginx 外部进程。

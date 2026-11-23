@@ -640,7 +640,7 @@ async function loadDoctor() {
     const rows = [
       ['应用版本', report.version],
       ['系统', report.platform],
-      ['HTTPS 切片服务', report.httpsAddr ? 'https://' + report.httpsAddr : '未启用'],
+      ['HTTP/HTTPS 切片服务', report.httpsAddr ? 'http(s)://' + report.httpsAddr : '未启用'],
       ['自动更新', formatUpdaterStatus(report.updater)],
       ['数据目录', report.dataDir],
       ['转换器', sidecar.path || '未找到'],

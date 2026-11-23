@@ -34,7 +34,7 @@ import (
 const defaultCompatHTTPSAddr = "0.0.0.0:42225"
 
 // version 由构建参数覆盖。
-var version = "0.6.1"
+var version = "0.6.2"
 
 func appVersion() string {
 	if v := strings.TrimSpace(mygo.App.Version()); v != "" && v != "0.0.0" {
@@ -69,14 +69,14 @@ func startHTTPSCompatServer(handler http.Handler, listenAddr, token, certFile, k
 		rawListener.Close()
 		return nil, nil, "", fmt.Errorf("初始化内置 HTTPS 证书失败：%w", err)
 	}
-	tlsListener := tls.NewListener(rawListener, tlsConfig)
+	dualListener := api.NewDualProtocolListener(rawListener, tlsConfig)
 	srv := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
-		if err := srv.Serve(tlsListener); err != nil && !errors.Is(err, http.ErrServerClosed) && onErr != nil {
+		if err := srv.Serve(dualListener); err != nil && !errors.Is(err, http.ErrServerClosed) && onErr != nil {
 			onErr(err)
 		}
 	}()
-	return srv, tlsListener.Addr(), certSource, nil
+	return srv, dualListener.Addr(), certSource, nil
 }
 
 func init() {
@@ -277,7 +277,7 @@ func run() error {
 			return err
 		}
 		compatServer = srv
-		log.Printf("内置 HTTPS 切片兼容服务已监听：https://%s（证书：%s）", compatBound.String(), certSource)
+		log.Printf("内置 HTTP/HTTPS 切片兼容服务已监听：http(s)://%s（证书：%s）", compatBound.String(), certSource)
 	}
 	if picker != nil {
 		// 热更新 Relaunch 在 OnQuit 之后重启新进程，必须提前释放数据目录锁与 42225 端口。

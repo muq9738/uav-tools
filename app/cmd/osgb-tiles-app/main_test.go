@@ -125,6 +125,33 @@ func TestDualHTTPUIAndHTTPSCompatListener(t *testing.T) {
 		t.Fatalf("解析返回任务 ID 失败：%v", err)
 	}
 
+	// 同一 42225 兼容端口也应直接接受明文 HTTP POST /task/create（兼容原有 http://...:42225 脚本）。
+	outDirHTTP := filepath.Join(t.TempDir(), "out-http")
+	payloadHTTP, _ := json.Marshal(map[string]any{
+		"options": map[string]any{
+			"name":       "dual-listener-http-check",
+			"type":       "TiltModelSlicing",
+			"inputPath":  inDir,
+			"outputPath": outDirHTTP,
+		},
+	})
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+	httpResp, err := httpClient.Post("http://"+compatAddr.String()+"/task/create", "application/json", bytes.NewReader(payloadHTTP))
+	if err != nil {
+		t.Fatalf("明文 HTTP /task/create 请求失败：%v", err)
+	}
+	defer httpResp.Body.Close()
+	if httpResp.StatusCode != http.StatusCreated {
+		errBody, _ := io.ReadAll(httpResp.Body)
+		t.Fatalf("明文 HTTP /task/create 状态码 = %d, want 201 (%s)", httpResp.StatusCode, string(errBody))
+	}
+	var createdHTTP struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(httpResp.Body).Decode(&createdHTTP); err != nil || createdHTTP.ID == "" {
+		t.Fatalf("解析明文 HTTP 返回任务 ID 失败：%v", err)
+	}
+
 	// 同一个任务立即可从桌面 HTTP UI 的 /api/jobs 列表中看到。
 	uiResp, err := http.Get("http://" + httpListener.Addr().String() + "/api/jobs")
 	if err != nil {
@@ -139,15 +166,20 @@ func TestDualHTTPUIAndHTTPSCompatListener(t *testing.T) {
 	if err := json.NewDecoder(uiResp.Body).Decode(&list); err != nil {
 		t.Fatal(err)
 	}
-	found := false
+	foundHTTPS, foundHTTP := false, false
 	for _, job := range list.Jobs {
 		if job.ID == created.ID {
-			found = true
-			break
+			foundHTTPS = true
+		}
+		if job.ID == createdHTTP.ID {
+			foundHTTP = true
 		}
 	}
-	if !found {
+	if !foundHTTPS {
 		t.Fatalf("UI /api/jobs 未同步展示通过 HTTPS /task/create 提交的任务 %s", created.ID)
+	}
+	if !foundHTTP {
+		t.Fatalf("UI /api/jobs 未同步展示通过明文 HTTP /task/create 提交的任务 %s", createdHTTP.ID)
 	}
 }
 
