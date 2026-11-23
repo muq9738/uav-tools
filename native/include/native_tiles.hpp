@@ -27,6 +27,7 @@ void uninstallImageCapture();
 unsigned validateImageForEncoding(const osg::Image& image);
 void copyImageRgba8(const osg::Image& image, unsigned char* destination, std::size_t rowStrideBytes=0);
 osg::ref_ptr<EncodedImage> encodeImage(const osg::Image& image);
+osg::ref_ptr<EncodedImage> encodeOpaqueJpegImage(const osg::Image& image, unsigned jpegQuality=85);
 osg::ref_ptr<EncodedImage> encodePreviewResizedImage(const osg::Image& image, unsigned maxDimension, unsigned jpegQuality=80);
 std::uint64_t residentBytes();
 std::string contentKey(const Bytes& bytes);

@@ -759,11 +759,13 @@ Json convert(const Options& requested) {
     if(options.checkCancelled) options.checkCancelled();
     if(resume) resume->check();
     emit({{"type","progress"},{"stage","finalize"},{"done",processed},{"total",processed},{"unit","files"}});
-    // 单层输入的所有文件都没有子瓦片时，逐文件误差都是 0；顶层根若沿用 0，
-    // Cesium 会认定无需细化而跳过整棵树。根节点必须有正误差。
-    if(!(error>0) && bounds.valid()) {
+    // 顶层根是无内容容器；保持 >= 2000 误差（与 rebuildTop 及外部查看器习惯一致），
+    // 确保单层或小场景在任意初始视距下首帧都能立即遍历到首个有效内容层。
+    if(bounds.valid()) {
         double extent=std::max({bounds.xMax()-bounds.xMin(),bounds.yMax()-bounds.yMin(),bounds.zMax()-bounds.zMin()});
-        error=std::max(extent/50.,1e-3);
+        error=std::max({error,extent/50.,2000.});
+    } else if(!(error>0)) {
+        error=2000.;
     }
     Json root={{"boundingVolume",boundingBoxJson(bounds)},{"transform",std::vector<double>(placement.ptr(),placement.ptr()+16)},
                {"geometricError",error},{"refine","REPLACE"},{"children",children}};

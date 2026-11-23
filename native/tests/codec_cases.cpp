@@ -3,6 +3,7 @@
 #include "output_validation.hpp"
 #include <osg/Geode>
 #include <osg/Group>
+#include <osg/MatrixTransform>
 #include <osg/Texture2D>
 #include <osgDB/WriteFile>
 #include <draco/compression/decode.h>
@@ -113,6 +114,46 @@ int main(int argc,char** argv) {
                 }
             }
             require(sawEmbeddedImage,"expected at least one embedded image inside Draco GLB");
+        }
+        {
+            // Full compat relay profile: Draco + embedTextures + rebuildTop + preview on opaque multi-block roots.
+            fs::create_directories(root/"input-relay");
+            for(unsigned b=0;b<2;++b) {
+                auto g=new osg::Geometry;auto p=new osg::Vec3Array;auto uv=new osg::Vec2Array;
+                for(unsigned y=0;y<=4;++y) for(unsigned x=0;x<=4;++x) {
+                    p->push_back({float(x)*2.0f,float(y)*2.0f,0.0f});uv->push_back({float(x)/4.0f,float(y)/4.0f});
+                }
+                auto idx=new osg::DrawElementsUInt(GL_TRIANGLES);
+                for(unsigned y=0;y<4;++y) for(unsigned x=0;x<4;++x) {
+                    unsigned a=y*5+x,c=a+1,d=a+5,e=d+1;for(auto v:{a,c,e,a,e,d}) idx->push_back(v);
+                }
+                g->setVertexArray(p);g->setTexCoordArray(0,uv);g->addPrimitiveSet(idx);
+                auto image=new osg::Image;image->allocateImage(8,8,1,GL_RGBA,GL_UNSIGNED_BYTE,1);image->setFileName("opaque.png");
+                for(unsigned y=0;y<8;++y) for(unsigned x=0;x<8;++x) {auto px=image->data(x,y);px[0]=static_cast<unsigned char>(20+x*25);px[1]=static_cast<unsigned char>(30+y*25);px[2]=140;px[3]=255;}
+                auto tex=new osg::Texture2D(image);tex->setFilter(osg::Texture::MIN_FILTER,osg::Texture::LINEAR);tex->setFilter(osg::Texture::MAG_FILTER,osg::Texture::LINEAR);
+                tex->setWrap(osg::Texture::WRAP_S,osg::Texture::CLAMP_TO_EDGE);tex->setWrap(osg::Texture::WRAP_T,osg::Texture::CLAMP_TO_EDGE);
+                auto geode=new osg::Geode;geode->addDrawable(g);geode->getOrCreateStateSet()->setTextureAttributeAndModes(0,tex,osg::StateAttribute::ON);
+                auto mt=new osg::MatrixTransform;mt->setMatrix(osg::Matrixd::translate(double(b)*12.0,0.0,0.0));mt->addChild(geode);
+                require(osgDB::writeNodeFile(*mt,(root/"input-relay"/("block"+std::to_string(b)+".osgb")).u8string(),write),"relay block fixture");
+            }
+            Options relay=o;relay.input=root/"input-relay";relay.output=root/"relay-full";
+            relay.dracoGeometry=true;relay.compressGeometry=false;relay.embedTextures=true;relay.rebuildTop=true;relay.preview=true;relay.textureFormat="original";
+            auto report=convert(relay);
+            require(report["status"]=="complete" && report["embedTextures"]==true && report["rebuildTop"]==true && report["topGlbs"].get<unsigned>()>=1,"relay full report");
+            require(report.contains("preview") && report["preview"]["status"]=="complete","relay preview report");
+            require(!fs::exists(relay.output/"textures") || fs::is_empty(relay.output/"textures"),"relay must not emit external textures");
+            auto mainTileset=Json::parse(readBytes(relay.output/"tileset.json"));
+            auto previewTileset=Json::parse(readBytes(relay.output/"preview/tileset.json"));
+            require(mainTileset["root"]["geometricError"].get<double>()>=2000.0,"main root geometricError must guarantee first-frame traversal");
+            require(previewTileset["root"]["geometricError"].get<double>()>=2000.0,"preview root geometricError must guarantee first-frame traversal");
+            auto topGlbBytes=readBytes(relay.output/report["topAncestors"][0]["content"].get<std::string>());
+            auto topDoc=Json::parse(topGlbBytes.begin()+20,topGlbBytes.begin()+20+u32(topGlbBytes,12));
+            require(topDoc.contains("images") && !topDoc["images"].empty(),"top GLB must contain embedded atlas");
+            require(topDoc["images"][0].contains("bufferView") && !topDoc["images"][0].contains("uri"),"top GLB atlas must be embedded");
+            require(topDoc["images"][0]["mimeType"]=="image/jpeg" || topDoc["images"][0]["mimeType"]=="image/png","top GLB atlas mimeType");
+            if(report["topAncestors"][0]["bake"]["textureEncoding"]=="JPEG RGB") {
+                require(topDoc["images"][0]["mimeType"]=="image/jpeg","opaque embedded top atlas should encode as JPEG");
+            }
         }
         o.dracoGeometry=false;
         for(auto format:{"uastc","etc1s"}) {

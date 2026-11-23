@@ -213,6 +213,43 @@ osg::ref_ptr<EncodedImage> encodeImage(const osg::Image& im) {
     }
     result->bytes.resize(length);return result;
 }
+osg::ref_ptr<EncodedImage> encodeOpaqueJpegImage(const osg::Image& im, unsigned jpegQuality) {
+    validateImageForEncoding(im);
+    const unsigned width=static_cast<unsigned>(im.s());
+    const unsigned height=static_cast<unsigned>(im.t());
+    Bytes rgba(static_cast<std::size_t>(width)*height*4);
+    copyImageRgba8(im,rgba.data(),static_cast<std::size_t>(width)*4);
+    for(std::size_t i=3;i<rgba.size();i+=4) if(rgba[i]<255) return nullptr;
+    // 尝试用系统已内置的 OSG JPEG 插件编码（macOS ImageIO / Windows osgdb_jpeg），
+    // 不引入新三方库；若插件不可用则返回空由调用方回退 PNG。
+    auto* rw=osgDB::Registry::instance()->getReaderWriterForExtension("jpg");
+    if(!rw) return nullptr;
+    osg::ref_ptr<osg::Image> rgb=new osg::Image;
+    rgb->allocateImage(static_cast<int>(width),static_cast<int>(height),1,GL_RGB,GL_UNSIGNED_BYTE,1);
+    rgb->setOrigin(osg::Image::BOTTOM_LEFT);
+    for(unsigned y=0;y<height;++y) {
+        const unsigned char* src=rgba.data()+static_cast<std::size_t>(y)*width*4;
+        unsigned char* dst=rgb->data(0,static_cast<int>(y));
+        for(unsigned x=0;x<width;++x) {
+            dst[x*3+0]=src[x*4+0];
+            dst[x*3+1]=src[x*4+1];
+            dst[x*3+2]=src[x*4+2];
+        }
+    }
+    std::ostringstream out(std::ios::binary);
+    osg::ref_ptr<osgDB::Options> opts=new osgDB::Options("JPEG_QUALITY "+std::to_string(std::clamp(jpegQuality,40U,95U)));
+    auto status=rw->writeImage(*rgb,out,opts.get());
+    if(!status.success()) return nullptr;
+    const std::string data=out.str();
+    if(data.size()<=3 || static_cast<unsigned char>(data[0])!=0xFF || static_cast<unsigned char>(data[1])!=0xD8 || static_cast<unsigned char>(data[2])!=0xFF)
+        return nullptr;
+    auto result=new EncodedImage;
+    result->bytes.assign(reinterpret_cast<const unsigned char*>(data.data()),
+                         reinterpret_cast<const unsigned char*>(data.data())+data.size());
+    result->mime="image/jpeg";
+    result->flipV=true;
+    return result;
+}
 osg::ref_ptr<EncodedImage> encodePreviewResizedImage(const osg::Image& im, unsigned maxDimension, unsigned jpegQuality) {
     validateImageForEncoding(im);
     const unsigned srcW=static_cast<unsigned>(im.s());
@@ -227,43 +264,7 @@ osg::ref_ptr<EncodedImage> encodePreviewResizedImage(const osg::Image& im, unsig
         dstW=std::max(1U,static_cast<unsigned>(std::lround(double(srcW)*double(maxDimension)/double(srcH))));
     }
     auto resized=resampleRgbaImage(im,dstW,dstH,true);
-    bool opaque=true;
-    for(unsigned y=0;y<dstH && opaque;++y) {
-        const unsigned char* row=resized->data(0,static_cast<int>(y));
-        for(unsigned x=0;x<dstW;++x) if(row[x*4+3]<255) {opaque=false;break;}
-    }
-    if(!opaque) return encodeImage(*resized);
-    // 尝试用系统已内置的 OSG JPEG 插件编码（macOS ImageIO / Windows osgdb_jpeg），
-    // 不引入新三方库；若插件不可用则回退 PNG。
-    auto* rw=osgDB::Registry::instance()->getReaderWriterForExtension("jpg");
-    if(rw) {
-        osg::ref_ptr<osg::Image> rgb=new osg::Image;
-        rgb->allocateImage(static_cast<int>(dstW),static_cast<int>(dstH),1,GL_RGB,GL_UNSIGNED_BYTE,1);
-        rgb->setOrigin(osg::Image::BOTTOM_LEFT);
-        for(unsigned y=0;y<dstH;++y) {
-            const unsigned char* src=resized->data(0,static_cast<int>(y));
-            unsigned char* dst=rgb->data(0,static_cast<int>(y));
-            for(unsigned x=0;x<dstW;++x) {
-                dst[x*3+0]=src[x*4+0];
-                dst[x*3+1]=src[x*4+1];
-                dst[x*3+2]=src[x*4+2];
-            }
-        }
-        std::ostringstream out(std::ios::binary);
-        osg::ref_ptr<osgDB::Options> opts=new osgDB::Options("JPEG_QUALITY "+std::to_string(std::clamp(jpegQuality,40U,95U)));
-        auto status=rw->writeImage(*rgb,out,opts.get());
-        if(status.success()) {
-            const std::string data=out.str();
-            if(data.size()>3 && static_cast<unsigned char>(data[0])==0xFF && static_cast<unsigned char>(data[1])==0xD8 && static_cast<unsigned char>(data[2])==0xFF) {
-                auto result=new EncodedImage;
-                result->bytes.assign(reinterpret_cast<const unsigned char*>(data.data()),
-                                     reinterpret_cast<const unsigned char*>(data.data())+data.size());
-                result->mime="image/jpeg";
-                result->flipV=true;
-                return result;
-            }
-        }
-    }
+    if(auto jpeg=encodeOpaqueJpegImage(*resized,jpegQuality)) return jpeg;
     return encodeImage(*resized);
 }
 }

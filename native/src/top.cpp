@@ -950,9 +950,17 @@ public:
         // Inputs have already been projected once when creating source Items.
         auto metrics=simplify(mesh,target,options_);metrics["boundarySeal"]=seal;metrics["uniqueInputTriangles"]=metrics["inputTriangles"];metrics["inputTriangles"]=sum;
         auto islands=charts(mesh,options_);double atlasScale=0;double atlasFill=pack(islands,atlasScale);auto baked=bake(mesh,islands,options_);
+        bool preserveTopEncoded=false;
+        if(options_.embedTextures && options_.textureFormat=="original") {
+            if(auto jpeg=encodeOpaqueJpegImage(*baked.image,85)) {
+                baked.image->setUserData(jpeg.get());
+                baked.audit["textureEncoding"]="JPEG RGB";
+                preserveTopEncoded=true;
+            }
+        }
         auto output=outputGeometry(mesh,islands,baked.image);std::string name="top-"+std::to_string(serial_++)+".glb";
         if(options_.observeTopGeometry) options_.observeTopGeometry(name,output);
-        auto content=writeGlb(output,options_.output/"content"/name,options_.output/"textures",false,nullptr,options_.compressGeometry,false,&options_);
+        auto content=writeGlb(output,options_.output/"content"/name,options_.output/"textures",preserveTopEncoded,nullptr,options_.compressGeometry,false,&options_);
         bounds.expandBy(content.bounds);double extent=std::max({bounds.xMax()-bounds.xMin(),bounds.yMax()-bounds.yMin(),bounds.zMax()-bounds.zMin()});
         double error=childError>0?childError*2:extent/50.;
         Json tile={{"boundingVolume",boundingBoxJson(bounds)},{"geometricError",error},{"refine","REPLACE"},{"content",{{"uri","content/"+name}}},{"children",children}};

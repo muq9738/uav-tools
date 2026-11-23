@@ -823,7 +823,8 @@ Json buildPreview(const Json& mainRoot,const Json& records,const Options& option
     }
     if(failure) std::rethrow_exception(failure);
 
-    double rootError=std::max(mainRoot.value("geometricError",0.0),1.0);
+    // 预览根是无内容容器；与主产物一致保持 >= 2000 误差，确保任意初始视距下首帧立即细化到概览层。
+    double rootError=std::max(mainRoot.value("geometricError",0.0),2000.0);
     Json previewRoot={{"boundingVolume",mainRoot.at("boundingVolume")},
                       {"transform",std::vector<double>(placement.ptr(),placement.ptr()+16)},
                       {"geometricError",rootError},

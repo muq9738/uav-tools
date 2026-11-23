@@ -1,5 +1,11 @@
 # 更新日志
 
+## 0.6.4
+
+- `/task/create` 切片兼容接口（大疆智图 / RPA 接力）默认开启轻量预览（`preview: true`，显式传 `settings.preview: false` 可关闭），转换完成后与主 `tileset.json` 一同原子发布 `preview/`（含 `preview/tileset.json`），确保打包上传与桌面端均可直接打开轻量预览。
+- 优化首帧加载保障：主入口 `tileset.json` 与轻量预览 `preview/tileset.json` 的空容器根节点统一保证 `geometricError >= 2000`，确保任意初始视距下首帧立即细化到首个有效内容层。
+- 优化多块模型 `--rebuild-top` + `--embed-textures` 首帧体积：不透明顶层烘焙图集自动以 JPEG 编码内嵌（含透明通道时自动回退无损 PNG），大幅缩减首帧顶层瓦片大小。
+
 ## 0.6.3
 
 - 新增 `--embed-textures`（`embedTextures`）选项，将原始 JPEG/PNG 或 KTX2 贴图直接内嵌到 GLB `bufferView` 中（同时兼容 Draco 几何压缩），消除首帧加载时的二次串行外置贴图 HTTP 请求，请求数减少约 75% 且零画质损失。

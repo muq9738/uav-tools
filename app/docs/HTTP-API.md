@@ -27,7 +27,7 @@
 {"input":"/data/osgb","output":"/data/new-tiles","threads":2,"geometry":"meshopt","memoryBudgetMiB":512,"srs":"EPSG:32651","origin":"500000,0,10","texturePixels":false}
 ```
 
-可选字段还包括 `preview`（默认 false；同一任务额外生成独立 `preview/` 轻量预览，主产物不变）、`embedTextures`（默认 false；将贴图直接内嵌在 GLB `bufferView` 中减少 HTTP 请求，`/task/create` 兼容接口默认开启并默认使用 `draco` 压缩以优化首帧加载）、`rebuildTop`（默认 false）、`topSealDistance`（重建顶层前的边界焊缝距离，0..2 米，默认 2，0 表示不焊）、`textureFormat`（默认 `original`，另支持 `uastc` / `etc1s`）、`dracoSpeed`（默认 5，支持 0/5/10）；`geometry` 另支持 `draco`。这些选项及组合明确有损，保留保真默认；Top 只新增祖先，不删除原子树。参数会持久化并进入 native 检查点身份；旧任务 Spec 缺省字段按保真默认解释，转换器版本或二进制变化的检查点仍按身份合同拒绝复用。
+可选字段还包括 `preview`（`/api/jobs` 默认 false，`/task/create` 兼容接口默认 true；同一任务额外生成独立 `preview/` 轻量预览，主产物不变，传 `settings.preview: false` 可关闭）、`embedTextures`（默认 false；将贴图直接内嵌在 GLB `bufferView` 中减少 HTTP 请求，`/task/create` 兼容接口默认开启并默认使用 `draco` 压缩以优化首帧加载）、`rebuildTop`（默认 false）、`topSealDistance`（重建顶层前的边界焊缝距离，0..2 米，默认 2，0 表示不焊）、`textureFormat`（默认 `original`，另支持 `uastc` / `etc1s`）、`dracoSpeed`（默认 5，支持 0/5/10）；`geometry` 另支持 `draco`。这些选项及组合明确有损，保留保真默认；Top 只新增祖先，不删除原子树。参数会持久化并进入 native 检查点身份；旧任务 Spec 缺省字段按保真默认解释，转换器版本或二进制变化的检查点仍按身份合同拒绝复用。
 
 input 可以是目录或索引 `.osgb`。除了 input/output 均可省略：默认 threads=2、geometry=meshopt、memoryBudgetMiB=0、texturePixels=false；坐标由 native 读取 metadata。0 预算代表不限，不保证单文件峰值。未知字段与无效参数返回 400。
 
