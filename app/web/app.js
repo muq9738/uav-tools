@@ -75,9 +75,53 @@ function progressText(job) {
   return `${done} / ${total} 个文件 · ${percent(job)}%`
 }
 
+const GENERIC_TASK_SEGMENTS = new Set([
+  'out', 'output', 'outputs',
+  '3dtiles', 'tiles', 'tileset',
+  'b3dm', 'b3dms', 'glb', 'gltf',
+  'result', 'results', 'dist', 'build', 'export',
+  'terra_osgbs', 'terra_osgb', 'terra_b3dms', 'terra_b3dm', 'terra_pcd',
+  'osgb', 'osgbs', 'data', 'model', 'models', 'pc',
+  'block', 'blocks', 'production', 'productions',
+])
+
+function isGenericTaskSegment(seg) {
+  const s = (seg || '').trim()
+  if (!s || s === '.' || s === '..' || /^[a-zA-Z]:$/.test(s) || /^\d+$/.test(s)) return true
+  const lower = s.toLowerCase()
+  if (GENERIC_TASK_SEGMENTS.has(lower)) return true
+  if (lower.endsWith('-3dtiles') || lower.endsWith('_3dtiles')) {
+    return isGenericTaskSegment(lower.slice(0, -8))
+  }
+  return false
+}
+
+function splitPathSegments(path) {
+  return String(path || '').split(/[\\/]+/).map(s => s.trim()).filter(Boolean)
+}
+
+function pickProjectSegment(path, stripOsgbFile = false) {
+  const segs = splitPathSegments(path)
+  if (stripOsgbFile && segs.length > 0 && segs[segs.length - 1].toLowerCase().endsWith('.osgb')) {
+    segs.pop()
+  }
+  for (let i = segs.length - 1; i >= 0; i -= 1) {
+    if (!isGenericTaskSegment(segs[i])) return segs[i]
+  }
+  return ''
+}
+
 function taskName(job) {
-  const output = job.spec.output.replace(/[\\/]+$/, '')
-  return output.split(/[\\/]/).pop() || job.id
+  const explicit = (job.spec?.name || '').trim()
+  if (explicit && !isGenericTaskSegment(explicit)) return explicit
+  const outSegs = splitPathSegments(job.spec?.output)
+  if (outSegs.length > 0 && !isGenericTaskSegment(outSegs[outSegs.length - 1])) {
+    return outSegs[outSegs.length - 1]
+  }
+  return pickProjectSegment(job.spec?.output, false)
+    || pickProjectSegment(job.spec?.input, true)
+    || outSegs[outSegs.length - 1]
+    || job.id
 }
 
 function notify(text, isError = false) {
@@ -368,6 +412,7 @@ $('#detail-dialog').addEventListener('close', () => {
 function renderDetail(job) {
   const failed = job.state === 'failed'
   if (failed && !state.expanded) state.expanded = true
+  if ($('#detail-title')) $('#detail-title').textContent = taskName(job)
   const container = $('#detail-body')
   container.replaceChildren()
 
@@ -604,9 +649,19 @@ for (const button of document.querySelectorAll('.rail-item')) {
 function formatUpdaterStatus(updater) {
   if (!updater) return state.config?.updaterAvailable ? '已启用' : '未启用'
   if (!updater.enabled) return '当前安装方式不支持自更新（请检查安装目录写权限）'
-  const auth = updater.tokenConfigured ? '已内置只读 GitHub 令牌' : 'GitHub 公开访问'
-  if (updater.availableVersion) return `发现新版本 v${updater.availableVersion}（${auth}）`
-  return `已启用（${auth}）`
+  const details = [updater.tokenConfigured ? '已内置只读 GitHub 令牌' : 'GitHub 公开访问']
+  if (updater.activeProxy) {
+    try {
+      details.push(`国内加速 ${new URL(updater.activeProxy).host}`)
+    } catch {
+      details.push(`国内加速 ${updater.activeProxy}`)
+    }
+  } else if (updater.chinaMirror) {
+    details.push('国内加速待命')
+  }
+  const suffix = details.join(' · ')
+  if (updater.availableVersion) return `发现新版本 v${updater.availableVersion}（${suffix}）`
+  return `已启用（${suffix}）`
 }
 
 function syncUpdaterUI(updaterInfo) {

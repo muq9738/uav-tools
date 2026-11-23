@@ -41,6 +41,7 @@ func (s State) Terminal() bool {
 
 // Spec 是一次转换请求的参数；与转换器命令行一一对应。
 type Spec struct {
+	Name            string   `json:"name,omitempty"`
 	Input           string   `json:"input"`
 	Output          string   `json:"output"`
 	Threads         int      `json:"threads"`
@@ -1013,6 +1014,12 @@ func normalize(spec Spec) (Spec, error) {
 	}
 	spec.Input = input
 	spec.Output = output
+	spec.Name = strings.TrimSpace(spec.Name)
+	if spec.Name == "" || isGenericTaskSegment(spec.Name) {
+		if inferred := InferTaskName(input, output); inferred != "" {
+			spec.Name = inferred
+		}
+	}
 	spec.SRS = strings.TrimSpace(spec.SRS)
 	spec.Origin = strings.TrimSpace(spec.Origin)
 	return spec, nil
@@ -1093,6 +1100,95 @@ func normalizeLevel(level string) string {
 	default:
 		return "info"
 	}
+}
+
+var genericTaskSegments = map[string]struct{}{
+	"out": {}, "output": {}, "outputs": {},
+	"3dtiles": {}, "tiles": {}, "tileset": {},
+	"b3dm": {}, "b3dms": {}, "glb": {}, "gltf": {},
+	"result": {}, "results": {}, "dist": {}, "build": {}, "export": {},
+	"terra_osgbs": {}, "terra_osgb": {}, "terra_b3dms": {}, "terra_b3dm": {}, "terra_pcd": {},
+	"osgb": {}, "osgbs": {}, "data": {}, "model": {}, "models": {}, "pc": {},
+	"block": {}, "blocks": {}, "production": {}, "productions": {},
+}
+
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func isDriveRootSegment(s string) bool {
+	return len(s) == 2 && s[1] == ':' && ((s[0] >= 'a' && s[0] <= 'z') || (s[0] >= 'A' && s[0] <= 'Z'))
+}
+
+func isGenericTaskSegment(seg string) bool {
+	s := strings.TrimSpace(seg)
+	if s == "" || s == "." || s == ".." || isDriveRootSegment(s) || isAllDigits(s) {
+		return true
+	}
+	lower := strings.ToLower(s)
+	if _, ok := genericTaskSegments[lower]; ok {
+		return true
+	}
+	for _, suffix := range []string{"-3dtiles", "_3dtiles"} {
+		if base, ok := strings.CutSuffix(lower, suffix); ok && isGenericTaskSegment(base) {
+			return true
+		}
+	}
+	return false
+}
+
+func splitPathSegments(p string) []string {
+	parts := strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' })
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
+func pickProjectSegment(rawPath string, stripOsgbFile bool) string {
+	segs := splitPathSegments(rawPath)
+	if stripOsgbFile && len(segs) > 0 && strings.HasSuffix(strings.ToLower(segs[len(segs)-1]), ".osgb") {
+		segs = segs[:len(segs)-1]
+	}
+	for i := len(segs) - 1; i >= 0; i-- {
+		if !isGenericTaskSegment(segs[i]) {
+			return segs[i]
+		}
+	}
+	return ""
+}
+
+// InferTaskName 从输出/输入路径中提取有意义的项目名称，跳过诸如 out、terra_osgbs、models、pc、0 等通用层级。
+func InferTaskName(input, output string) string {
+	outSegs := splitPathSegments(output)
+	if len(outSegs) > 0 && !isGenericTaskSegment(outSegs[len(outSegs)-1]) {
+		return outSegs[len(outSegs)-1]
+	}
+	if name := pickProjectSegment(output, false); name != "" {
+		return name
+	}
+	if name := pickProjectSegment(input, true); name != "" {
+		return name
+	}
+	if len(outSegs) > 0 {
+		return outSegs[len(outSegs)-1]
+	}
+	inSegs := splitPathSegments(input)
+	if len(inSegs) > 0 {
+		return inSegs[len(inSegs)-1]
+	}
+	return ""
 }
 
 func newID() string {

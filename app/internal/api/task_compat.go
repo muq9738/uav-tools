@@ -62,7 +62,7 @@ func (s *Server) handleCompatCreateTask(w http.ResponseWriter, r *http.Request) 
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":    job.ID,
-		"name":  strings.TrimSpace(opts.Name),
+		"name":  job.Spec.Name,
 		"state": job.State,
 		"job":   job,
 	})
@@ -108,6 +108,7 @@ func mapCompatToSpec(opts compatTaskOptions) jobs.Spec {
 	}
 
 	return jobs.Spec{
+		Name:          strings.TrimSpace(opts.Name),
 		Input:         filepath.FromSlash(strings.TrimSpace(opts.InputPath)),
 		Output:        filepath.FromSlash(strings.TrimSpace(opts.OutputPath)),
 		Threads:       threads,

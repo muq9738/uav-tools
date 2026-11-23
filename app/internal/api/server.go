@@ -27,6 +27,8 @@ type UpdaterInfo struct {
 	Enabled          bool   `json:"enabled"`
 	AvailableVersion string `json:"availableVersion,omitempty"`
 	TokenConfigured  bool   `json:"tokenConfigured"`
+	ActiveProxy      string `json:"activeProxy,omitempty"`
+	ChinaMirror      bool   `json:"chinaMirror,omitempty"`
 }
 
 // Options 配置 Server。

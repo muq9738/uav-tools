@@ -34,7 +34,7 @@ import (
 const defaultCompatHTTPSAddr = "0.0.0.0:42225"
 
 // version 由构建参数覆盖。
-var version = "0.6.5"
+var version = "0.6.6"
 
 func appVersion() string {
 	if v := strings.TrimSpace(mygo.App.Version()); v != "" && v != "0.0.0" {
@@ -162,9 +162,8 @@ func run() error {
 	var updaterStatus func() api.UpdaterInfo
 	if !*headless && !*browser {
 		picker = &desktop.Picker{}
-		if token := strings.TrimSpace(updateGitHubToken); token != "" {
-			mygo.Updater.SetSource(newGitHubTokenSource(updateGitHubRepo, token))
-		}
+		updateSource := newGitHubTokenSource(updateGitHubRepo, strings.TrimSpace(updateGitHubToken))
+		mygo.Updater.SetSource(updateSource)
 		var updaterReady atomic.Bool
 		mygo.App.WhenReady(func() { updaterReady.Store(true) })
 		mygo.Use(updater.Plugin)
@@ -195,6 +194,8 @@ func run() error {
 				Enabled:          mygo.Updater.Enabled(),
 				AvailableVersion: available,
 				TokenConfigured:  strings.TrimSpace(updateGitHubToken) != "",
+				ActiveProxy:      updateSource.ActiveProxy(),
+				ChinaMirror:      updateSource.ChinaMirrorActive(),
 			}
 		}
 	}

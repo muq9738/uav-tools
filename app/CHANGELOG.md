@@ -1,5 +1,10 @@
 # 更新日志
 
+## 0.6.6
+
+- **国内自动更新加速**：桌面端内置更新源新增中国大陆网络自动检测（探测 `ipip` / Cloudflare trace / 国内连通性并缓存结果），处于中国大陆时自动并发竞速实测可用的 GitHub 加速代理（如 `gh-proxy.com`、`ghfast.top`、`gh-proxy.org` 等），过滤 HTML 限流页并在资产下载失败时自动切换节点或回退 GitHub 直连；第三方代理全程不携带任何 GitHub 令牌，且支持通过 `OSGB_TILES_UPDATE_PROXY` 自定义代理或设为 `off` 禁用。
+- **智能识别任务项目名**：修复大疆智图 / RPA 等复用 `.../项目名/models/pc/0/terra_osgbs/out` 路径时任务列表与详情弹窗统一显示 `out` 的问题；后端与前端自动跳过 `out`、`terra_osgbs`、`models`、`pc`、`0` 等通用目录层级提取真实项目名（如 `11月23号项目2_9688`），并同步回写 `/task/create` 响应 `name`。
+
 ## 0.6.5
 
 - `/task/create` 切片兼容接口默认允许清空并覆盖已有非空输出目录（`overwrite: true`，显式传 `settings.overwrite: false` 可关闭），兼容大疆智图 / RPA 上游重跑同一任务并复用原 `out` 输出目录的场景，避免因残留旧成果触发 `400` 创建失败。

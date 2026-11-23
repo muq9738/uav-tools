@@ -89,7 +89,7 @@ func TestCompatCreateTaskMapping(t *testing.T) {
 	if got.SRS != "ENU:30.25,120.15" || got.Origin != "0,0,0" {
 		t.Fatalf("坐标映射错误：%q / %q", got.SRS, got.Origin)
 	}
-	if got.Geometry != "draco" || !got.EmbedTextures || !got.Preview || !got.Overwrite || got.TextureFormat != "original" || !got.RebuildTop || got.Threads != 32 {
+	if got.Name != "site_001" || got.Geometry != "draco" || !got.EmbedTextures || !got.Preview || !got.Overwrite || got.TextureFormat != "original" || !got.RebuildTop || got.Threads != 32 {
 		t.Fatalf("参数映射错误：%+v", got)
 	}
 }
@@ -209,6 +209,46 @@ func TestCompatCreateTaskOverwritesExistingOutput(t *testing.T) {
 		t.Fatalf("清空 out 不应影响输入目录：%v", err)
 	}
 	waitManagerState(t, manager, created["id"].(string), jobs.StateSucceeded)
+}
+
+func TestCompatCreateTaskInfersProjectNameWhenNameIsEmptyOrOut(t *testing.T) {
+	runner := &captureRunner{}
+	manager, err := jobs.New(jobs.Config{Runner: runner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(manager.Close)
+	server, _ := newTestServer(t, Options{Manager: manager})
+
+	input := filepath.Join(t.TempDir(), "11月23号项目2_9688", "models", "pc", "0", "terra_osgbs")
+	if err := os.MkdirAll(input, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(input, "metadata.xml"), []byte("<ModelMetadata/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(input, "out")
+
+	for _, rawName := range []string{"", "out"} {
+		status, created := postJSON(t, server.URL+"/task/create", map[string]any{
+			"options": map[string]any{
+				"name":       rawName,
+				"type":       "TiltModelSlicing",
+				"inputPath":  filepath.ToSlash(input),
+				"outputPath": filepath.ToSlash(output),
+			},
+		})
+		if status != http.StatusCreated {
+			t.Fatalf("name=%q 期望 201，实际 %d %v", rawName, status, created)
+		}
+		if created["name"] != "11月23号项目2_9688" {
+			t.Fatalf("name=%q 期望自动提取项目名 11月23号项目2_9688，实际 %v", rawName, created["name"])
+		}
+		waitManagerState(t, manager, created["id"].(string), jobs.StateSucceeded)
+		if got := runner.lastSpec().Name; got != "11月23号项目2_9688" {
+			t.Fatalf("Spec.Name 期望 11月23号项目2_9688，实际 %q", got)
+		}
+	}
 }
 
 func TestBuiltInSelfSignedTLSServesCompatEndpoint(t *testing.T) {

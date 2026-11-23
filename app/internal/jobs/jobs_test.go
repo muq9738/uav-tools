@@ -531,3 +531,50 @@ func TestOverwriteClearsExistingOutputAndEnforcesGuards(t *testing.T) {
 	close(runner.release)
 	waitFor(t, manager, job.ID, StateSucceeded)
 }
+
+func TestInferTaskName(t *testing.T) {
+	cases := []struct {
+		name   string
+		input  string
+		output string
+		want   string
+	}{
+		{
+			name:   "大疆智图默认 out 输出目录提取项目名",
+			input:  `D:\无人机倾斜摄影成果模型流程\PCGSPRO_1747384429\yang.zhang5@chintanneng.com\11月23号项目2_9688\models\pc\0\terra_osgbs`,
+			output: `D:\无人机倾斜摄影成果模型流程\PCGSPRO_1747384429\yang.zhang5@chintanneng.com\11月23号项目2_9688\models\pc\0\terra_osgbs\out`,
+			want:   "11月23号项目2_9688",
+		},
+		{
+			name:   "大疆智图自动补全 terra_osgbs-3dtiles 提取项目名",
+			input:  `D:\PCGSPRO\user\11月23号项目2_9688\models\pc\0\terra_osgbs`,
+			output: `D:\PCGSPRO\user\11月23号项目2_9688\models\pc\0\terra_osgbs-3dtiles`,
+			want:   "11月23号项目2_9688",
+		},
+		{
+			name:   "独立盘符根目录 out 从输入路径回溯项目名",
+			input:  `D:\PCGSPRO\user\11月23号项目2_9688\models\pc\0\terra_osgbs`,
+			output: `E:\out`,
+			want:   "11月23号项目2_9688",
+		},
+		{
+			name:   "自定义有意义的输出目录名直接保留",
+			input:  `/data/osgb/campus`,
+			output: `/data/tiles/campus-3dtiles`,
+			want:   "campus-3dtiles",
+		},
+		{
+			name:   "索引 osgb 文件输入 + 通用 out 目录",
+			input:  `/data/Hangzhou_Station/Data/Tile_001.osgb`,
+			output: `/data/Hangzhou_Station/Data/out`,
+			want:   "Hangzhou_Station",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := InferTaskName(tc.input, tc.output); got != tc.want {
+				t.Fatalf("InferTaskName(%q, %q) = %q, want %q", tc.input, tc.output, got, tc.want)
+			}
+		})
+	}
+}
