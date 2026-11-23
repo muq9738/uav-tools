@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -54,6 +55,7 @@ type Spec struct {
 	TopSealDistance *float64 `json:"topSealDistance,omitempty"`
 	TextureFormat   string   `json:"textureFormat,omitempty"`
 	DracoSpeed      *int     `json:"dracoSpeed,omitempty"`
+	Overwrite       bool     `json:"overwrite,omitempty"`
 }
 
 // Progress 是转换进度的快照。Total 为 0 表示尚无法估算总量。
@@ -246,6 +248,25 @@ func (m *Manager) Submit(spec Spec) (Job, error) {
 	if m.closed {
 		m.mu.Unlock()
 		return Job{}, errors.New("服务正在关闭")
+	}
+	if normalized.Overwrite {
+		for _, existing := range m.records {
+			if existing.job.State.Terminal() {
+				continue
+			}
+			if pathsOverlap(existing.job.Spec.Output, normalized.Output) {
+				m.mu.Unlock()
+				return Job{}, errors.New("输出目录正被进行中的任务占用，无法覆盖")
+			}
+			if within(normalized.Output, existing.job.Spec.Input) {
+				m.mu.Unlock()
+				return Job{}, errors.New("输出目录包含进行中任务的输入目录，无法覆盖")
+			}
+		}
+		if err := clearOutputDir(normalized.Output); err != nil {
+			m.mu.Unlock()
+			return Job{}, err
+		}
 	}
 	rec := &record{job: Job{
 		ID:        newID(),
@@ -916,21 +937,48 @@ func normalize(spec Spec) (Spec, error) {
 	if entries, err := os.ReadDir(input); err == nil && len(entries) == 0 {
 		return Spec{}, errors.New("输入目录为空")
 	}
-	if input == output {
+	if filepath.Dir(output) == output {
+		return Spec{}, errors.New("输出目录不能是根目录")
+	}
+	if samePath(input, output) {
 		return Spec{}, errors.New("输出目录不能与输入目录相同")
 	}
 	if within(output, input) {
 		return Spec{}, errors.New("输出目录不能包含输入目录")
 	}
-	if stat, err := os.Stat(output); err == nil {
+	if stat, err := os.Lstat(output); err == nil {
+		if stat.Mode()&os.ModeSymlink != 0 {
+			if spec.Overwrite {
+				return Spec{}, errors.New("输出路径是符号链接，拒绝覆盖")
+			}
+			stat, err = os.Stat(output)
+			if err != nil {
+				return Spec{}, err
+			}
+		}
+		if os.SameFile(info, stat) {
+			return Spec{}, errors.New("输出目录不能与输入目录相同")
+		}
 		if !stat.IsDir() {
 			return Spec{}, errors.New("输出路径已存在且不是目录")
+		}
+		if spec.Overwrite {
+			if realInput, err := filepath.EvalSymlinks(input); err == nil {
+				if realOutput, err := filepath.EvalSymlinks(output); err == nil {
+					if samePath(realInput, realOutput) {
+						return Spec{}, errors.New("输出目录不能与输入目录相同")
+					}
+					if within(realOutput, realInput) {
+						return Spec{}, errors.New("输出目录不能包含输入目录")
+					}
+				}
+			}
 		}
 		entries, err := os.ReadDir(output)
 		if err != nil {
 			return Spec{}, err
 		}
-		if len(entries) > 0 {
+		if len(entries) > 0 && !spec.Overwrite {
 			return Spec{}, errors.New("输出目录必须为空或尚不存在，避免覆盖已有成果")
 		}
 	} else if !os.IsNotExist(err) {
@@ -970,12 +1018,68 @@ func normalize(spec Spec) (Spec, error) {
 	return spec, nil
 }
 
+func normalizePathForCompare(path string) string {
+	cleaned := filepath.Clean(path)
+	if runtime.GOOS == "windows" {
+		return strings.ToLower(cleaned)
+	}
+	return cleaned
+}
+
+func samePath(a, b string) bool {
+	return normalizePathForCompare(a) == normalizePathForCompare(b)
+}
+
 func within(parent, child string) bool {
-	relative, err := filepath.Rel(parent, child)
+	relative, err := filepath.Rel(normalizePathForCompare(parent), normalizePathForCompare(child))
 	if err != nil {
 		return false
 	}
-	return relative == "." || (!strings.HasPrefix(relative, "..") && !filepath.IsAbs(relative))
+	if relative == "." {
+		return true
+	}
+	if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+		return false
+	}
+	return true
+}
+
+func pathsOverlap(a, b string) bool {
+	return samePath(a, b) || within(a, b) || within(b, a)
+}
+
+// clearOutputDir 在允许覆盖的场景下同步清空已有输出目录，确保返回前旧成果（如 tileset.json）已移除。
+func clearOutputDir(output string) error {
+	info, err := os.Lstat(output)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("无法检查已有输出目录：%w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("输出路径是符号链接，拒绝覆盖")
+	}
+	if !info.IsDir() {
+		return errors.New("输出路径已存在且不是目录")
+	}
+	entries, err := os.ReadDir(output)
+	if err != nil {
+		return fmt.Errorf("无法读取已有输出目录：%w", err)
+	}
+	for _, entry := range entries {
+		if err := os.RemoveAll(filepath.Join(output, entry.Name())); err != nil {
+			return fmt.Errorf("无法清空已有输出目录：%w", err)
+		}
+	}
+	if err := os.Remove(output); err != nil && !os.IsNotExist(err) {
+		// Windows 下若目录本身被资源管理器等短暂占用但内部已清空，保留空目录供转换器直接发布。
+		remaining, readErr := os.ReadDir(output)
+		if readErr != nil || len(remaining) > 0 {
+			return fmt.Errorf("无法移除已有输出目录：%w", err)
+		}
+	}
+	return nil
 }
 
 func normalizeLevel(level string) string {

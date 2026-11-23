@@ -37,6 +37,7 @@ type compatTaskSettings struct {
 	ComputedNormal         *bool  `json:"computedNormal"`
 	VertexCompress         *bool  `json:"vertexCompress"`
 	Preview                *bool  `json:"preview"`
+	Overwrite              *bool  `json:"overwrite"`
 	MaxConcurrency         int    `json:"maxConcurrency"`
 }
 
@@ -70,8 +71,9 @@ func (s *Server) handleCompatCreateTask(w http.ResponseWriter, r *http.Request) 
 func mapCompatToSpec(opts compatTaskOptions) jobs.Spec {
 	settings := opts.Settings
 
-	// 默认采用 Draco 压缩 + GLB 内嵌原始贴图 + 同步生成轻量预览，兼顾低带宽首帧加载与高视觉保真；
-	// 仅在显式关闭 vertexCompress 时回退 raw，显式传 preview=false 时跳过轻量预览。
+	// 默认采用 Draco 压缩 + GLB 内嵌原始贴图 + 同步生成轻量预览，并允许清空覆盖已有输出目录，
+	// 兼容旧切片服务在上游重跑（复用原 out 目录）时的覆盖行为；
+	// 仅在显式关闭 vertexCompress 时回退 raw，显式传 preview=false / overwrite=false 时关闭对应行为。
 	geometry := "draco"
 	if settings.VertexCompress != nil && !*settings.VertexCompress {
 		geometry = "raw"
@@ -80,6 +82,11 @@ func mapCompatToSpec(opts compatTaskOptions) jobs.Spec {
 	preview := true
 	if settings.Preview != nil {
 		preview = *settings.Preview
+	}
+
+	overwrite := true
+	if settings.Overwrite != nil {
+		overwrite = *settings.Overwrite
 	}
 
 	textureFormat := "original"
@@ -111,5 +118,6 @@ func mapCompatToSpec(opts compatTaskOptions) jobs.Spec {
 		Preview:       preview,
 		RebuildTop:    settings.IsRebuildTop,
 		TextureFormat: textureFormat,
+		Overwrite:     overwrite,
 	}
 }

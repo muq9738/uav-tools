@@ -89,7 +89,7 @@ func TestCompatCreateTaskMapping(t *testing.T) {
 	if got.SRS != "ENU:30.25,120.15" || got.Origin != "0,0,0" {
 		t.Fatalf("坐标映射错误：%q / %q", got.SRS, got.Origin)
 	}
-	if got.Geometry != "draco" || !got.EmbedTextures || !got.Preview || got.TextureFormat != "original" || !got.RebuildTop || got.Threads != 32 {
+	if got.Geometry != "draco" || !got.EmbedTextures || !got.Preview || !got.Overwrite || got.TextureFormat != "original" || !got.RebuildTop || got.Threads != 32 {
 		t.Fatalf("参数映射错误：%+v", got)
 	}
 }
@@ -128,6 +128,7 @@ func TestCompatCreateTaskFallbackAndValidation(t *testing.T) {
 				"textureFormat":  "uastc",
 				"vertexCompress": false,
 				"preview":        false,
+				"overwrite":      false,
 				"isRebuildTop":   false,
 				"maxConcurrency": 128,
 			},
@@ -140,9 +141,74 @@ func TestCompatCreateTaskFallbackAndValidation(t *testing.T) {
 	waitManagerState(t, manager, id, jobs.StateSucceeded)
 
 	got := runner.lastSpec()
-	if got.Geometry != "raw" || !got.EmbedTextures || got.Preview || got.TextureFormat != "uastc" || got.RebuildTop || got.Threads != 64 || got.SRS != "" {
+	if got.Geometry != "raw" || !got.EmbedTextures || got.Preview || got.Overwrite || got.TextureFormat != "uastc" || got.RebuildTop || got.Threads != 64 || got.SRS != "" {
 		t.Fatalf("映射异常：%+v", got)
 	}
+}
+
+func TestCompatCreateTaskOverwritesExistingOutput(t *testing.T) {
+	runner := &captureRunner{}
+	manager, err := jobs.New(jobs.Config{Runner: runner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(manager.Close)
+	server, _ := newTestServer(t, Options{Manager: manager})
+
+	input := sampleInput(t)
+	output := filepath.Join(input, "out")
+	if err := os.MkdirAll(filepath.Join(output, "Block"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(output, "tileset.json"), []byte(`{"stale":true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(output, "Block", "Block_L15_1.glb"), []byte("stale-glb"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 显式关闭 overwrite 时仍拦截非空输出目录。
+	status, _ := postJSON(t, server.URL+"/task/create", map[string]any{
+		"options": map[string]any{
+			"name":       "rerun_blocked",
+			"type":       "TiltModelSlicing",
+			"inputPath":  filepath.ToSlash(input),
+			"outputPath": filepath.ToSlash(output),
+			"settings": map[string]any{
+				"overwrite": false,
+			},
+		},
+	})
+	if status != http.StatusBadRequest {
+		t.Fatalf("overwrite=false 且输出非空时应返回 400，实际 %d", status)
+	}
+	if _, err := os.Stat(filepath.Join(output, "tileset.json")); err != nil {
+		t.Fatalf("overwrite=false 拒绝时不应清空原输出：%v", err)
+	}
+
+	// 默认行为兼容上游重跑：自动清空已有非空输出目录并创建任务。
+	status, created := postJSON(t, server.URL+"/task/create", map[string]any{
+		"options": map[string]any{
+			"name":       "rerun_overwrite",
+			"type":       "TiltModelSlicing",
+			"inputPath":  filepath.ToSlash(input),
+			"outputPath": filepath.ToSlash(output),
+			"settings": map[string]any{
+				"is3DTiles1_1": true,
+				"isRebuildTop": true,
+			},
+		},
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("默认重跑覆盖期望 201，实际 %d %v", status, created)
+	}
+	if _, err := os.Stat(filepath.Join(output, "tileset.json")); !os.IsNotExist(err) {
+		t.Fatalf("创建返回前应已清空旧 tileset.json：%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(input, "metadata.xml")); err != nil {
+		t.Fatalf("清空 out 不应影响输入目录：%v", err)
+	}
+	waitManagerState(t, manager, created["id"].(string), jobs.StateSucceeded)
 }
 
 func TestBuiltInSelfSignedTLSServesCompatEndpoint(t *testing.T) {

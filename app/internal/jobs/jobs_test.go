@@ -449,3 +449,85 @@ func TestNotFound(t *testing.T) {
 		t.Fatalf("期望 ErrNotFound，实际 %v", err)
 	}
 }
+
+func TestOverwriteClearsExistingOutputAndEnforcesGuards(t *testing.T) {
+	input := newInput(t)
+	runner := &fakeRunner{release: make(chan struct{})}
+	manager, err := New(Config{Runner: runner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+
+	// 1. Overwrite 拒绝覆盖输入目录本身或包含输入目录的父目录，且不删除任何源文件。
+	if _, err := manager.Submit(Spec{Input: input, Output: input, Overwrite: true}); err == nil || !strings.Contains(err.Error(), "不能与输入目录相同") {
+		t.Fatalf("期望拒绝覆盖输入目录，实际 %v", err)
+	}
+	if _, err := manager.Submit(Spec{Input: input, Output: filepath.Dir(input), Overwrite: true}); err == nil || !strings.Contains(err.Error(), "不能包含输入目录") {
+		t.Fatalf("期望拒绝覆盖父目录，实际 %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(input, "metadata.xml")); err != nil {
+		t.Fatalf("源文件不应被删除：%v", err)
+	}
+
+	// 2. Overwrite 拒绝覆盖普通文件。
+	regularFile := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(regularFile, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Submit(Spec{Input: input, Output: regularFile, Overwrite: true}); err == nil || !strings.Contains(err.Error(), "不是目录") {
+		t.Fatalf("期望拒绝覆盖普通文件，实际 %v", err)
+	}
+	if data, err := os.ReadFile(regularFile); err != nil || string(data) != "keep" {
+		t.Fatalf("普通文件不应被改动：%q %v", string(data), err)
+	}
+
+	// 3. Overwrite 拒绝覆盖符号链接，且不删除链接目标内容。
+	symlinkTarget := filepath.Join(t.TempDir(), "target")
+	if err := os.MkdirAll(symlinkTarget, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(symlinkTarget, "keep.txt"), []byte("safe"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	symlinkPath := filepath.Join(t.TempDir(), "link-out")
+	if err := os.Symlink(symlinkTarget, symlinkPath); err == nil {
+		if _, err := manager.Submit(Spec{Input: input, Output: symlinkPath, Overwrite: true}); err == nil || !strings.Contains(err.Error(), "符号链接") {
+			t.Fatalf("期望拒绝覆盖符号链接，实际 %v", err)
+		}
+		if data, err := os.ReadFile(filepath.Join(symlinkTarget, "keep.txt")); err != nil || string(data) != "safe" {
+			t.Fatalf("符号链接目标不应被删除：%q %v", string(data), err)
+		}
+	}
+
+	// 4. 非空子目录（模拟 input/out 重跑）应被同步清空，且不破坏同级输入文件。
+	output := filepath.Join(input, "out")
+	if err := os.MkdirAll(filepath.Join(output, "Block"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(output, "tileset.json"), []byte(`{"stale":true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(output, "Block", "old.glb"), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	job, err := manager.Submit(Spec{Input: input, Output: output, Overwrite: true})
+	if err != nil {
+		t.Fatalf("允许覆盖时提交失败：%v", err)
+	}
+	// Submit 返回前旧产物必须已清空，避免上游按 tileset.json 轮询时误判完成。
+	if _, err := os.Stat(filepath.Join(output, "tileset.json")); !os.IsNotExist(err) {
+		t.Fatalf("提交返回后旧 tileset.json 仍存在：%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(input, "metadata.xml")); err != nil {
+		t.Fatalf("清空 out 不应影响父目录输入文件：%v", err)
+	}
+
+	// 5. 进行中的任务占用同一输出目录时，后续覆盖请求应被拒绝。
+	waitFor(t, manager, job.ID, StateRunning)
+	if _, err := manager.Submit(Spec{Input: input, Output: output, Overwrite: true}); err == nil || !strings.Contains(err.Error(), "进行中的任务占用") {
+		t.Fatalf("期望拒绝覆盖正在运行任务的输出目录，实际 %v", err)
+	}
+	close(runner.release)
+	waitFor(t, manager, job.ID, StateSucceeded)
+}

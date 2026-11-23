@@ -1,5 +1,10 @@
 # 更新日志
 
+## 0.6.5
+
+- `/task/create` 切片兼容接口默认允许清空并覆盖已有非空输出目录（`overwrite: true`，显式传 `settings.overwrite: false` 可关闭），兼容大疆智图 / RPA 上游重跑同一任务并复用原 `out` 输出目录的场景，避免因残留旧成果触发 `400` 创建失败。
+- 覆盖清理在任务创建返回 `201` 前同步完成，防止上游轮询 `tileset.json` 时误读旧成果；同时内置路径安全防护，严格拒绝覆盖输入目录、父目录、根目录、符号链接或正被进行中任务占用的输出目录。
+
 ## 0.6.4
 
 - `/task/create` 切片兼容接口（大疆智图 / RPA 接力）默认开启轻量预览（`preview: true`，显式传 `settings.preview: false` 可关闭），转换完成后与主 `tileset.json` 一同原子发布 `preview/`（含 `preview/tileset.json`），确保打包上传与桌面端均可直接打开轻量预览。
