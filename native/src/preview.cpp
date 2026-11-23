@@ -1,4 +1,5 @@
 #include "preview.hpp"
+#include "product_metadata.hpp"
 #include <osg/Geode>
 #include <osg/LOD>
 #include <osg/PagedLOD>
@@ -830,7 +831,7 @@ Json buildPreview(const Json& mainRoot,const Json& records,const Options& option
                       {"geometricError",rootError},
                       {"refine","REPLACE"},
                       {"children",std::move(previewChildren)}};
-    atomicJson(options.output/"tileset.json",{{"asset",{{"version","1.1"},{"generator","osgb-tiles-native mesh-preview-v2"}}},
+    atomicJson(options.output/"tileset.json",{{"asset",{{"version","1.1"},{"generator",kAssetGenerator}}},
                                               {"geometricError",rootError},
                                               {"root",previewRoot}});
 

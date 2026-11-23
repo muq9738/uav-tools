@@ -32,10 +32,23 @@ def file_hashes(directory):
 cap = json.loads(subprocess.check_output([native, "--capabilities"], text=True, encoding="utf-8", timeout=10))
 assert cap["protocolVersion"] == 1 and cap["pauseResume"] is True
 assert cap["defaults"] == {"threads": 2, "geometry": "meshopt", "memoryBudgetMiB": 0, "texturePixels": False, "embedTextures": False, "rebuildTop": False, "preview": False, "topSealDistance": 2.0, "textureFormat": "original", "dracoSpeed": 5}
-baseline = call(root / "baseline")
+product = json.loads((Path(__file__).resolve().parents[2] / "app" / "mygo.json").read_text(encoding="utf-8"))
+assert cap["version"] == product["version"], cap
+baseline_out = root / "baseline"
+baseline = call(baseline_out)
 assert baseline.returncode == 0, baseline.stderr
 assert events(baseline)[-1]["report"]["status"] == "complete"
-expected = file_hashes(root / "baseline")
+
+generator = f"uav tools v{product['version']}"
+for path in [baseline_out / "tileset.json", *baseline_out.glob("tiles/*.json")]:
+    asset = json.loads(path.read_text(encoding="utf-8"))["asset"]
+    assert (asset["version"], asset["generator"]) == ("1.1", generator), (path, asset)
+for path in (baseline_out / "content").glob("*.glb"):
+    with path.open("rb") as stream:
+        header = stream.read(20)
+        asset = json.loads(stream.read(int.from_bytes(header[12:16], "little")))["asset"]
+    assert (asset["version"], asset["generator"]) == ("2.0", generator), (path, asset)
+expected = file_hashes(baseline_out)
 checkpoint, output, pause = root / "checkpoint", root / "output", root / "pause"
 
 def stop_in_progress(mode):

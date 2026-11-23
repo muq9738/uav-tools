@@ -37,8 +37,17 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            notes=$(awk -v heading="## $version" '
+              $0 == heading { found = 1; next }
+              found && /^## / { exit }
+              found { print }
+            ' app/CHANGELOG.md)
+            if [[ "$notes" != *[![:space:]]* ]]; then
+              echo "No changelog entry for $tag" >&2
+              exit 1
+            fi
             gh release create "$tag" --repo "$GITHUB_REPOSITORY" \
-              --draft --title "$tag" --notes-file app/CHANGELOG.md
+              --draft --title "$tag" --notes "$notes"
           fi
 
   build:

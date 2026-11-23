@@ -1,5 +1,6 @@
 #include "native_tiles.hpp"
 #include "checkpoint.hpp"
+#include "product_metadata.hpp"
 #include <osgDB/Registry>
 #include <osg/Version>
 #include <fstream>
@@ -19,7 +20,7 @@
 namespace nt {
 Json capabilities() {
     Options defaults;
-    return {{"name","osgb-tiles"},{"version",NATIVE_VERSION},{"protocolVersion",1},
+    return {{"name","osgb-tiles"},{"version",kReleaseVersion},{"protocolVersion",1},
         {"jsonEvents",true},{"cancelFile",true},{"pauseResume",true},{"rebuildTop",true},{"topSealDistance",true},{"topAlgorithm","ancestor-rebuild-v1"},
         {"preview",true},{"previewAlgorithm","mesh-preview-v2"},{"previewDefaults",{{"streamingLod",true},{"geometry","meshopt+quantized"},{"texture","original"}}},
         {"geometryFormats",{"raw","meshopt","draco"}},{"textureFormats",{"original","uastc","etc1s"}},{"embedTextures",true},
@@ -77,7 +78,7 @@ Json loadedModules() {
 }
 Json checkpointConverterIdentity() {
     auto actual=executablePath({});
-    Json identity={{"version",NATIVE_VERSION},{"binary",fileIdentity(actual)},{"osg",osgGetVersion()},{"runtimeModules",loadedModules()}};
+    Json identity={{"version",kReleaseVersion},{"binary",fileIdentity(actual)},{"osg",osgGetVersion()},{"runtimeModules",loadedModules()}};
     auto manifest=actual.parent_path()/"native-runtime.json";
     if(fs::is_regular_file(manifest)) {
         auto runtime=Json::parse(readBytes(manifest));identity["runtimeManifest"]=fileIdentity(manifest);

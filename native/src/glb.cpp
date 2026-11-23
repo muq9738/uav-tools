@@ -1,5 +1,6 @@
 #include "native_tiles.hpp"
 #include "codecs.hpp"
+#include "product_metadata.hpp"
 #include <osg/AlphaFunc>
 #include <osg/Material>
 #include <osg/Texture2D>
@@ -61,7 +62,7 @@ int wrapMode(osg::Texture::WrapMode value) {
     throw std::runtime_error("glTF 不支持该纹理边界采样，拒绝更改 wrap");
 }
 struct Writer {
-    Json doc={{"asset",{{"version","2.0"},{"generator","osgb-tiles-native"}}},
+    Json doc={{"asset",{{"version","2.0"},{"generator",kAssetGenerator}}},
               {"scene",0},{"scenes",Json::array({{{"nodes",Json::array()}}})},
               {"nodes",Json::array()},{"meshes",Json::array()},{"materials",Json::array()},
               {"accessors",Json::array()},{"bufferViews",Json::array()},

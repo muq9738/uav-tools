@@ -1,0 +1,6 @@
+#pragma once
+
+namespace nt {
+inline constexpr char kReleaseVersion[] = "@OSGB_RELEASE_VERSION@";
+inline constexpr char kAssetGenerator[] = "uav tools v@OSGB_RELEASE_VERSION@";
+}

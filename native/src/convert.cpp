@@ -3,6 +3,7 @@
 #include "checkpoint.hpp"
 #include "top.hpp"
 #include "preview.hpp"
+#include "product_metadata.hpp"
 #include <osg/Geode>
 #include <osg/LOD>
 #include <osg/MatrixTransform>
@@ -502,7 +503,7 @@ struct Engine {
         if(resume) resume->check();
         for(const auto& dependency:pending.dependencies) convertFile(dependency.file,dependency.matrix);
         Json root=finish(pending);double error=root["geometricError"].get<double>();
-        Json tile={{"asset",{{"version","1.1"}}},{"geometricError",error},{"root",root}};
+        Json tile={{"asset",{{"version","1.1"},{"generator",kAssetGenerator}}},{"geometricError",error},{"root",root}};
         if(resume && saved.at("complete").get<bool>()) {
             if(Json::parse(readBytes(manifest))!=tile) throw std::runtime_error("检查点引用子树与已完成清单不一致");
         } else {
@@ -941,7 +942,7 @@ Json convert(const Options& requested) {
         report["filesReused"]=resume->reused.size();
     }
     atomicJson(options.output/"conversion-report.json",report);
-    atomicJson(options.output/"tileset.json",{{"asset",{{"version","1.1"},{"generator","osgb-tiles-native"}}},{"geometricError",error},{"root",root}});
+    atomicJson(options.output/"tileset.json",{{"asset",{{"version","1.1"},{"generator",kAssetGenerator}}},{"geometricError",error},{"root",root}});
     if(options.checkCancelled) options.checkCancelled();
     // 发布前只读完整性校验；暂停与续转也不能绕过资产门禁。
     validateStagedOutput(transaction.staging());

@@ -1,5 +1,10 @@
 # 更新日志
 
+## 0.6.7
+
+- New tilesets and GLBs, including lightweight previews, now identify their generator as `uav tools v0.6.7`.
+- The converter reads its release version from `app/mygo.json` at build time. The 3D Tiles and glTF format versions, geometry, and texture encoding are unchanged.
+
 ## 0.6.6
 
 - **国内自动更新加速**：桌面端内置更新源新增中国大陆网络自动检测（探测 `ipip` / Cloudflare trace / 国内连通性并缓存结果），处于中国大陆时自动并发竞速实测可用的 GitHub 加速代理（如 `gh-proxy.com`、`ghfast.top`、`gh-proxy.org` 等），过滤 HTML 限流页并在资产下载失败时自动切换节点或回退 GitHub 直连；第三方代理全程不携带任何 GitHub 令牌，且支持通过 `OSGB_TILES_UPDATE_PROXY` 自定义代理或设为 `off` 禁用。

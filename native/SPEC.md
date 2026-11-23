@@ -30,6 +30,9 @@ KTX2-UASTC、KTX2-ETC1S）均为显式选项且默认关闭，详见下文「可
 - glTF 使用 Y-up，瓦片与源 OSGB 局部坐标保持 Z-up；轴变换只执行一次。局部矩阵保持双精度，
   禁止把 ECEF 大坐标直接存 float32。
 - 位置与矩阵保持 double，Vec3d 在应用源矩阵、投影与局部居中后才写 glTF FLOAT。
+- 主产物和轻量预览的入口、逐源清单及 GLB 均使用 `uav tools v<version>` 作为 `asset.generator`，
+  其中发布版本在构建时从 `app/mygo.json` 读取；预览算法标识仍在报告中。`asset.version`
+  分别保持 3D Tiles `1.1` 和 glTF `2.0`，不把软件版本写入数据集修订字段 `tilesetVersion`。
 - 在独立暂存目录写内容与清单，成功后整体发布；可捕获失败清理本次暂存，修复输入后原路径可重跑；
   已有非空输出不覆盖。发布前只读校验入口/分文件清单引用的 GLB、图片、buffer 范围、扩展声明与
   有限包围体/误差，缺项或损坏即失败、不发布，见[发布前完整性校验](docs/specs/output-validation.md)。

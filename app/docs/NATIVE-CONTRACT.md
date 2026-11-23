@@ -4,11 +4,13 @@
 
 ## 能力与默认值
 
-`osgb-tiles --capabilities` 返回：
+`osgb-tiles --capabilities` 返回（节选）：
 
 ```json
-{"name":"osgb-tiles","version":"0.1.0","protocolVersion":1,"jsonEvents":true,"cancelFile":true,"pauseResume":true,"defaults":{"threads":2,"geometry":"meshopt","memoryBudgetMiB":0,"texturePixels":false}}
+{"name":"osgb-tiles","version":"0.6.7","protocolVersion":1,"jsonEvents":true,"cancelFile":true,"pauseResume":true,"defaults":{"threads":2,"geometry":"meshopt","memoryBudgetMiB":0,"texturePixels":false}}
 ```
+
+`version` 取自构建时的 `app/mygo.json`，`name` 仍是命令名。产物使用 `uav tools v<version>` 作为 `asset.generator`，`asset.version` 仍表示文件格式版本。
 
 App 拒绝不支持协议 1、真实事件或合作取消的转换器，也检查默认编码与线程。`pauseResume` 为可选能力；缺失或为 false 时保留普通转换，但不展示或接受暂停/继续操作。能力查询在分发模式下会加载必需随包插件；运行时动态库缺失由系统加载器报错。它仍不代替真实模型转换。
 

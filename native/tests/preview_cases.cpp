@@ -92,6 +92,10 @@ int main(int argc,char** argv) {
         require(report["preview"]["status"]=="complete" && report["preview"]["algorithm"]=="mesh-preview-v2" && report["preview"]["streamingLod"]==true,"预览摘要");
         require(report["preview"]["geometryEncoding"]=="EXT_meshopt_compression+KHR_mesh_quantization" && report["preview"]["textureFormat"]=="original","预览编码摘要");
         require(mainAssets(enabled.output)==expected,"开关预览前后主 tileset/content/textures/tiles 必须逐字节一致");
+        const auto mainManifest=Json::parse(readBytes(enabled.output/"tileset.json"));
+        const auto generator=mainManifest.at("asset").at("generator").get<std::string>();
+        const auto previewManifest=Json::parse(readBytes(enabled.output/"preview/tileset.json"));
+        require(previewManifest.at("asset")==mainManifest.at("asset"),"Preview tileset must use the same asset metadata as the main tileset");
         auto previewTris=report["preview"]["triangles"].get<std::uint64_t>();
         require(previewTris>0 && previewTris<416,"预览叶层三角面应通过锁边 QEM 简化显著低于源面数 416");
         require(report["preview"]["glbs"].get<std::uint64_t>()==3,"2 层树保留根概览与叶层，共 3 个流式瓦片");
@@ -104,6 +108,7 @@ int main(int argc,char** argv) {
         bool sawQuantizedUv=false,sawFloatUv=false;
         for(unsigned i=0;i<3;++i) {
             auto doc=gltf(enabled.output/"preview/content"/("tile-"+std::to_string(i)+".glb"));
+            require(doc.at("asset")==Json{{"version","2.0"},{"generator",generator}},"Preview GLBs must retain the glTF version and share the asset generator");
             require(hasExt(doc,"EXT_meshopt_compression") && hasExt(doc,"KHR_mesh_quantization") && hasExt(doc,"KHR_materials_unlit"),"预览扩展声明");
             for(const auto& mesh:doc["meshes"]) for(const auto& primitive:mesh["primitives"]) {
                 require(!primitive["attributes"].contains("NORMAL"),"unlit 预览省略法线");
