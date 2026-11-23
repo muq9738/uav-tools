@@ -22,10 +22,10 @@ Json capabilities() {
     return {{"name","osgb-tiles"},{"version",NATIVE_VERSION},{"protocolVersion",1},
         {"jsonEvents",true},{"cancelFile",true},{"pauseResume",true},{"rebuildTop",true},{"topSealDistance",true},{"topAlgorithm","ancestor-rebuild-v1"},
         {"preview",true},{"previewAlgorithm","mesh-preview-v2"},{"previewDefaults",{{"streamingLod",true},{"geometry","meshopt+quantized"},{"texture","original"}}},
-        {"geometryFormats",{"raw","meshopt","draco"}},{"textureFormats",{"original","uastc","etc1s"}},
+        {"geometryFormats",{"raw","meshopt","draco"}},{"textureFormats",{"original","uastc","etc1s"}},{"embedTextures",true},
         {"dracoSpeeds",{0,5,10}},{"codecs",{{"draco","1.5.7"},{"basisUniversal","1.16.4"}}},
         {"defaults",{{"threads",defaults.threads},{"geometry",defaults.compressGeometry?"meshopt":"raw"},
-                     {"memoryBudgetMiB",0},{"texturePixels",false},{"rebuildTop",false},{"preview",false},{"topSealDistance",2.0},{"textureFormat","original"},{"dracoSpeed",5}}}};
+                     {"memoryBudgetMiB",0},{"texturePixels",false},{"embedTextures",false},{"rebuildTop",false},{"preview",false},{"topSealDistance",2.0},{"textureFormat","original"},{"dracoSpeed",5}}}};
 }
 namespace {
 fs::path executablePath(const fs::path& executable) {

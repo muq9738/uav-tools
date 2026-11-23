@@ -48,6 +48,7 @@ type Spec struct {
 	Geometry        string   `json:"geometry"`
 	MemoryBudgetMiB uint64   `json:"memoryBudgetMiB"`
 	TexturePixels   bool     `json:"texturePixels,omitempty"`
+	EmbedTextures   bool     `json:"embedTextures,omitempty"`
 	Preview         bool     `json:"preview,omitempty"`
 	RebuildTop      bool     `json:"rebuildTop,omitempty"`
 	TopSealDistance *float64 `json:"topSealDistance,omitempty"`

@@ -763,6 +763,10 @@ OutputValidationStats validateStagedOutput(const fs::path& staging) {
             if(!images.is_array()) fail(reportPath, "records[].content[].images 不是数组");
             for(const auto& image : images) {
                 if(!image.is_object()) fail(reportPath, "records[].content[].images[] 不是对象");
+                if(image.value("embedded", false)) {
+                    if(image.contains("uri")) fail(reportPath, "内嵌纹理记录不应包含外部 uri");
+                    continue;
+                }
                 auto imageUri = stringMember(image, "uri", reportPath, "records[].content[].images[].uri");
                 resolveLocalUri(context, imageUri, context.stagingRoot, reportPath,
                                 "records[].content[].images[].uri");

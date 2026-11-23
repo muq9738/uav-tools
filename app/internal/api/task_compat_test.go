@@ -89,7 +89,7 @@ func TestCompatCreateTaskMapping(t *testing.T) {
 	if got.SRS != "ENU:30.25,120.15" || got.Origin != "0,0,0" {
 		t.Fatalf("坐标映射错误：%q / %q", got.SRS, got.Origin)
 	}
-	if got.Geometry != "meshopt" || got.TextureFormat != "original" || !got.RebuildTop || got.Threads != 32 {
+	if got.Geometry != "draco" || !got.EmbedTextures || got.TextureFormat != "original" || !got.RebuildTop || got.Threads != 32 {
 		t.Fatalf("参数映射错误：%+v", got)
 	}
 }
@@ -139,7 +139,7 @@ func TestCompatCreateTaskFallbackAndValidation(t *testing.T) {
 	waitManagerState(t, manager, id, jobs.StateSucceeded)
 
 	got := runner.lastSpec()
-	if got.Geometry != "raw" || got.TextureFormat != "uastc" || got.RebuildTop || got.Threads != 64 || got.SRS != "" {
+	if got.Geometry != "raw" || !got.EmbedTextures || got.TextureFormat != "uastc" || got.RebuildTop || got.Threads != 64 || got.SRS != "" {
 		t.Fatalf("映射异常：%+v", got)
 	}
 }

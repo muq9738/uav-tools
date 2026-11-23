@@ -69,7 +69,9 @@ func (s *Server) handleCompatCreateTask(w http.ResponseWriter, r *http.Request) 
 func mapCompatToSpec(opts compatTaskOptions) jobs.Spec {
 	settings := opts.Settings
 
-	geometry := "meshopt"
+	// 默认采用 Draco 压缩 + GLB 内嵌原始贴图，兼顾低带宽首帧加载与高视觉保真；
+	// 仅在显式关闭 vertexCompress 时回退 raw。
+	geometry := "draco"
 	if settings.VertexCompress != nil && !*settings.VertexCompress {
 		geometry = "raw"
 	}
@@ -99,6 +101,7 @@ func mapCompatToSpec(opts compatTaskOptions) jobs.Spec {
 		SRS:           strings.TrimSpace(settings.SRS),
 		Origin:        strings.TrimSpace(settings.SRSOrigin),
 		Geometry:      geometry,
+		EmbedTextures: true,
 		RebuildTop:    settings.IsRebuildTop,
 		TextureFormat: textureFormat,
 	}

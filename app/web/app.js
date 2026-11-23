@@ -297,6 +297,7 @@ $('#new-job').addEventListener('submit', async event => {
     memoryBudgetMiB: Number($('#memoryBudgetMiB').value),
     preview: $('#generatePreview').checked,
     rebuildTop: $('#rebuildTop').value === 'true',
+    embedTextures: $('#embedTextures') ? $('#embedTextures').value === 'true' : false,
     topSealDistance: Number($('#topSealDistance').value),
     textureFormat: $('#textureFormat').value,
     dracoSpeed: Number($('#dracoSpeed').value),
@@ -725,6 +726,7 @@ async function bootstrap() {
     }
     $('#rebuildTop').options[1].disabled = !sidecar.rebuildTop
     $('#topSealDistance').disabled = !sidecar.rebuildTop
+    if ($('#embedTextures')) $('#embedTextures').options[1].disabled = !sidecar.embedTextures
     $('#generatePreview').disabled = sidecar.available && !sidecar.preview
     if ($('#generatePreview').disabled) $('#generatePreview').checked = false
     if (state.config.pickerAvailable) {

@@ -297,7 +297,7 @@ std::vector<std::string> recordAssets(const Json& record,bool complete) {
     std::vector<std::string> assets;
     for(const auto& content:record.at("content")) {
         assets.push_back(content.at("uri"));
-        for(const auto& image:content.at("images")) assets.push_back(image.at("uri"));
+        for(const auto& image:content.at("images")) if(image.contains("uri")) assets.push_back(image.at("uri"));
     }
     if(complete) assets.push_back(record.at("tileset"));
     return assets;
@@ -710,7 +710,7 @@ Json convert(const Options& requested) {
         Json identity={{"input",options.input.u8string()},{"output",options.output.u8string()},
             {"entrypoints",entries},{"inputs",inputs},{"converter",checkpointConverterIdentity()},
             {"effectiveOptions",{{"srs",options.srs},{"origin",origin},{"preserveEncoded",options.preserveEncoded},
-                {"compressGeometry",options.compressGeometry},{"dracoGeometry",options.dracoGeometry},{"dracoSpeed",options.dracoSpeed},{"textureFormat",options.textureFormat},{"threads",options.threads},{"quantizeGeometry",options.quantizeGeometry},{"splitPagedLod",options.splitPagedLod},{"rebuildTop",options.rebuildTop},{"topSealDistance",options.topSealDistance},{"topAlgorithm","ancestor-rebuild-v1"},{"preview",options.preview},{"previewAlgorithm","mesh-preview-v2"},{"memoryBudgetBytes",options.memoryBudgetBytes}}}};
+                {"compressGeometry",options.compressGeometry},{"dracoGeometry",options.dracoGeometry},{"dracoSpeed",options.dracoSpeed},{"textureFormat",options.textureFormat},{"embedTextures",options.embedTextures},{"threads",options.threads},{"quantizeGeometry",options.quantizeGeometry},{"splitPagedLod",options.splitPagedLod},{"rebuildTop",options.rebuildTop},{"topSealDistance",options.topSealDistance},{"topAlgorithm","ancestor-rebuild-v1"},{"preview",options.preview},{"previewAlgorithm","mesh-preview-v2"},{"memoryBudgetBytes",options.memoryBudgetBytes}}}};
         checkpoint=std::make_unique<Checkpoint>(options.checkpointDir,identity,options.resume);
         resume=std::make_unique<ResumeState>(*checkpoint,options,inputs);processed=checkpoint->filesCompleted();
         if(options.checkCancelled) options.checkCancelled();
@@ -880,8 +880,11 @@ Json convert(const Options& requested) {
         geometryOriginalFloatBytes+=content.value("originalFloatBytes",content["geometryRawBytes"].get<std::uint64_t>());
         geometryRawBytes+=content["geometryRawBytes"].get<std::uint64_t>();geometryStoredBytes+=content["geometryStoredBytes"].get<std::uint64_t>();compressedViews+=content["compressedViews"].get<std::uint64_t>();
         for(const auto& image:content["images"]) {
-            imageCount++;originals+=image["originalEncoded"].get<bool>();const auto uri=image["uri"].get<std::string>();textureFiles.insert(uri);
-            if(image.contains("basis") && image["basis"].contains("gpuEstimate") && ktxSeen.insert(uri).second) {
+            imageCount++;originals+=image["originalEncoded"].get<bool>();
+            const auto uri=image.value("uri",std::string());
+            const auto key=!uri.empty()?uri:image.value("contentKey",std::string());
+            if(!key.empty()) textureFiles.insert(key);
+            if(image.contains("basis") && image["basis"].contains("gpuEstimate") && (key.empty() || ktxSeen.insert(key).second)) {
                 const auto& g=image["basis"]["gpuEstimate"];
                 ktxMipBytes+=g["withMipChainBytes"].get<double>();ktxRgba8Bytes+=g["rgba8WithMipChainBytes"].get<double>();
                 ktxTiers[g["tier"].get<std::string>()]++;
@@ -898,7 +901,11 @@ Json convert(const Options& requested) {
         geometryOriginalFloatBytes+=top.at("originalFloatBytes").get<std::uint64_t>();compressedViews+=top.at("compressedViews").get<std::uint64_t>();
         coordinateRoundingError=std::max(coordinateRoundingError,top.at("coordinateRoundingErrorMeters").get<double>());
         if(!top.at("draco").empty()) quantizationErrorMeters=std::max(quantizationErrorMeters,top.at("draco").at("maxWorldPositionErrorMeters").get<double>());
-        for(const auto& image:top.at("images")) {++imageCount;textureFiles.insert(image.at("uri").get<std::string>());}
+        for(const auto& image:top.at("images")) {
+            ++imageCount;
+            const auto key=image.contains("uri")?image.at("uri").get<std::string>():image.value("contentKey",std::string());
+            if(!key.empty()) textureFiles.insert(key);
+        }
     }
     Json report={{"status","complete"},{"converter",capabilities()},{"preserveEncodedTextures",options.preserveEncoded && options.textureFormat=="original"},{"format","3D Tiles 1.1 / glTF 2.0"},{"srs",options.srs},{"srsOrigin",origin},
         {"files",files.size()},{"glbs",glbs},{"sourceGlbs",sourceGlbs},{"verticesAllLods",vertices},{"trianglesAllLods",triangles},
@@ -913,7 +920,7 @@ Json convert(const Options& requested) {
         {"memoryBudgetBytes",options.memoryBudgetBytes},{"peakResidentBytes",sampler.peak()},
         {"splitPagedLod",options.splitPagedLod},{"quantizeGeometry",options.quantizeGeometry},
         {"rebuildTop",options.rebuildTop},{"topSealDistance",options.topSealDistance},{"topAlgorithm","ancestor-rebuild-v1"},{"topAncestors",topAudit},
-        {"textureFormat",options.textureFormat},{"dracoSpeed",options.dracoSpeed},
+        {"textureFormat",options.textureFormat},{"embedTextures",options.embedTextures},{"dracoSpeed",options.dracoSpeed},
         {"textureResidency",{{"withMipChainBytes",ktxMipBytes},{"rgba8WithMipChainBytes",ktxRgba8Bytes},
             {"savedVsRgba8",ktxRgba8Bytes>0?1.-ktxMipBytes/ktxRgba8Bytes:0.},{"tiers",ktxTiers},
             {"basis","format arithmetic over unique textures; consumer/GPU picks the real upload format"}}},

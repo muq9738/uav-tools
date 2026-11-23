@@ -30,6 +30,7 @@ type Defaults struct {
 	Geometry        string  `json:"geometry"`
 	MemoryBudgetMiB uint64  `json:"memoryBudgetMiB"`
 	TexturePixels   bool    `json:"texturePixels"`
+	EmbedTextures   bool    `json:"embedTextures"`
 	Preview         bool    `json:"preview"`
 	RebuildTop      bool    `json:"rebuildTop"`
 	TopSealDistance float64 `json:"topSealDistance"`
@@ -48,6 +49,7 @@ type Features struct {
 	TopSealDistance bool     `json:"topSealDistance"`
 	GeometryFormats []string `json:"geometryFormats"`
 	TextureFormats  []string `json:"textureFormats"`
+	EmbedTextures   bool     `json:"embedTextures"`
 	ProtocolVersion int      `json:"protocolVersion"`
 	Version         string   `json:"version"`
 	Defaults        Defaults `json:"defaults"`
@@ -180,6 +182,9 @@ func (e *Exec) Convert(ctx context.Context, spec jobs.Spec, control jobs.Control
 	if spec.TextureFormat != "original" && !contains(features.TextureFormats, spec.TextureFormat) {
 		return jobs.Result{}, errors.New("随包 native 不支持所选 KTX2 格式")
 	}
+	if spec.EmbedTextures && !features.EmbedTextures {
+		return jobs.Result{}, errors.New("随包 native 不支持内嵌纹理")
+	}
 	dracoSpeed := 5
 	if spec.DracoSpeed != nil {
 		dracoSpeed = *spec.DracoSpeed
@@ -209,6 +214,9 @@ func (e *Exec) Convert(ctx context.Context, spec jobs.Spec, control jobs.Control
 	}
 	if spec.TexturePixels {
 		args = append(args, "--texture-pixels")
+	}
+	if spec.EmbedTextures {
+		args = append(args, "--embed-textures")
 	}
 	if spec.Preview {
 		args = append(args, "--preview")
@@ -292,6 +300,7 @@ func (e *Exec) Convert(ctx context.Context, spec jobs.Spec, control jobs.Control
 		RebuildTop      bool            `json:"rebuildTop"`
 		TopSealDistance *float64        `json:"topSealDistance"`
 		TextureFormat   string          `json:"textureFormat"`
+		EmbedTextures   bool            `json:"embedTextures"`
 		DracoSpeed      int             `json:"dracoSpeed"`
 		Preview         json.RawMessage `json:"preview"`
 	}
@@ -301,7 +310,7 @@ func (e *Exec) Convert(ctx context.Context, spec jobs.Spec, control jobs.Control
 	} else if expected == "draco" {
 		expected = "KHR_draco_mesh_compression"
 	}
-	if json.Unmarshal(result.Report, &report) != nil || report.Status != "complete" || report.Geometry != expected || report.Budget == nil || *report.Budget != spec.MemoryBudgetMiB*(1<<20) || report.Threads == nil || *report.Threads != spec.Threads || report.PreserveEncoded == nil || *report.PreserveEncoded != (!spec.TexturePixels && spec.TextureFormat == "original") || report.RebuildTop != spec.RebuildTop || !sealMatches(spec.TopSealDistance, report.TopSealDistance) {
+	if json.Unmarshal(result.Report, &report) != nil || report.Status != "complete" || report.Geometry != expected || report.Budget == nil || *report.Budget != spec.MemoryBudgetMiB*(1<<20) || report.Threads == nil || *report.Threads != spec.Threads || report.PreserveEncoded == nil || *report.PreserveEncoded != (!spec.TexturePixels && spec.TextureFormat == "original") || report.RebuildTop != spec.RebuildTop || !sealMatches(spec.TopSealDistance, report.TopSealDistance) || report.EmbedTextures != spec.EmbedTextures {
 		return result, errors.New("native 最终报告缺失或与任务参数不一致，拒绝标记成功")
 	}
 	if report.TextureFormat == "" {

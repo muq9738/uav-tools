@@ -73,6 +73,7 @@ struct Writer {
     bool preserve;
     bool compressGeometry=false;
     bool quantizeGeometry=false;
+    bool embedTextures=false;
     bool preview=false;
     unsigned previewThreads=1;
     unsigned previewMaxTextureSize=0;
@@ -182,8 +183,9 @@ struct Writer {
         std::string key=contentKey(encoded->bytes);
         int imageId=-1;
         std::string auditUri;
+        bool embed=preview || embedTextures;
         bool embeddedNew=false;
-        if(preview) {
+        if(embed) {
             auto existingImage=embeddedImageIds.find(key);
             if(existingImage!=embeddedImageIds.end()) {
                 imageId=existingImage->second;
@@ -216,12 +218,13 @@ struct Writer {
         if(encoded->mime=="image/ktx2") {
             requireExtension("KHR_texture_basisu");doc["textures"].push_back({{"sampler",sampler},{"extensions",{{"KHR_texture_basisu",{{"source",imageId}}}}}});
         } else doc["textures"].push_back({{"source",imageId},{"sampler",sampler}});
-        if(!preview || embeddedNew) {
+        if(!embed || embeddedNew) {
             result.images++;
             Json audit={{"sourceName",image->getFileName()},
-                {"embedded",preview},{"originalEncoded",original},{"flipV",encoded->flipV},
+                {"embedded",embed},{"originalEncoded",original},{"flipV",encoded->flipV},
                 {"width",image->s()},{"height",image->t()},{"bytes",encoded->bytes.size()}};
             if(!auditUri.empty()) audit["uri"]=auditUri;
+            else audit["contentKey"]=key;
             if(!basisAudit.is_null()) audit["basis"]=basisAudit;
             result.imageAudit.push_back(std::move(audit));
         }
@@ -460,7 +463,7 @@ struct Writer {
 }
 ContentResult writeGlb(const std::vector<GeometryInput>& meshes,const fs::path& output,const fs::path& textures,bool preserve,const SpatialReference* spatial,bool compressGeometry,bool quantizeGeometry,const Options* codecOptions) {
     Writer writer;writer.textureDir=textures;writer.preserve=preserve;writer.spatial=spatial;writer.compressGeometry=compressGeometry && !(codecOptions && codecOptions->dracoGeometry);writer.quantizeGeometry=quantizeGeometry;
-    if(codecOptions) {writer.textureFormat=codecOptions->textureFormat;writer.preview=codecOptions->previewEncoding;writer.previewThreads=std::max(1U,codecOptions->threads);writer.previewMaxTextureSize=codecOptions->previewMaxTextureSize;writer.previewJpegQuality=codecOptions->previewJpegQuality;}
+    if(codecOptions) {writer.textureFormat=codecOptions->textureFormat;writer.embedTextures=codecOptions->embedTextures;writer.preview=codecOptions->previewEncoding;writer.previewThreads=std::max(1U,codecOptions->threads);writer.previewMaxTextureSize=codecOptions->previewMaxTextureSize;writer.previewJpegQuality=codecOptions->previewJpegQuality;}
     if(writer.preview) writer.requireExtension("KHR_materials_unlit");
     for(const auto& mesh:meshes) writer.geometry(mesh);
     if(writer.doc["meshes"].empty()) throw std::runtime_error("拒绝输出空 GLB");
@@ -468,7 +471,8 @@ ContentResult writeGlb(const std::vector<GeometryInput>& meshes,const fs::path& 
         if(quantizeGeometry) throw std::runtime_error("Draco cannot be combined with experimental U16 quantization");
         writer.result.dracoAudit=compressDraco(writer.doc,writer.binary,codecOptions->dracoSpeed);
         writer.result.quantizationErrorMeters=writer.result.dracoAudit.at("maxWorldPositionErrorMeters").get<double>();
-        writer.result.geometryStoredBytes=writer.binary.size();writer.result.compressedViews=writer.doc["bufferViews"].size();
+        writer.result.geometryStoredBytes=writer.result.dracoAudit.value("geometryStoredBytes",static_cast<std::uint64_t>(writer.binary.size()));
+        writer.result.compressedViews=writer.result.dracoAudit.value("dracoViews",static_cast<std::uint64_t>(writer.doc["bufferViews"].size()));
         if(writer.result.dracoAudit.contains("bounds")) {auto b=writer.result.dracoAudit["bounds"].get<std::vector<double>>();writer.result.bounds.expandBy(osg::BoundingBoxd(b[0],b[1],b[2],b[3],b[4],b[5]));}
     }
     writer.doc["buffers"]=Json::array({{{"byteLength",writer.binary.size()}}});

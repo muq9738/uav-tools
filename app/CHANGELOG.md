@@ -1,5 +1,10 @@
 # 更新日志
 
+## 0.6.3
+
+- 新增 `--embed-textures`（`embedTextures`）选项，将原始 JPEG/PNG 或 KTX2 贴图直接内嵌到 GLB `bufferView` 中（同时兼容 Draco 几何压缩），消除首帧加载时的二次串行外置贴图 HTTP 请求，请求数减少约 75% 且零画质损失。
+- `/task/create` 切片兼容接口默认启用 `Draco` 几何压缩 + `GLB` 内嵌原始贴图，显著降低单瓦片体积与网络往返，大幅提升 Cesium 首帧加载速度与交互流畅度。
+
 ## 0.6.2
 
 - 内置 `42225` 切片兼容服务支持同端口自动识别明文 `HTTP` 与 `HTTPS`（首字节 TLS 嗅探），兼容原有发送 `http://<IP>:42225/task/create` 的 RPA / GISBox 调用脚本，无需修改调用方协议。

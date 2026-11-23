@@ -194,9 +194,32 @@ Json compressDraco(Json& doc,Bytes& bin,unsigned speed) {
         }
         ++meshIndex;
     }
+    const std::uint64_t geometryStoredBytes=output.size();
+    const std::uint64_t dracoViews=newViews.size();
+    // 保留内嵌纹理的 bufferView（Draco 只重写几何流，不能丢弃 images[] 引用的贴图字节）。
+    if(doc.contains("images") && doc["images"].is_array()) {
+        std::map<unsigned,unsigned> copiedViews;
+        for(auto& image:doc["images"]) {
+            if(!image.contains("bufferView")) continue;
+            unsigned oldView=image.at("bufferView").get<unsigned>();
+            auto found=copiedViews.find(oldView);
+            if(found!=copiedViews.end()) {image["bufferView"]=found->second;continue;}
+            const auto& view=sourceDoc.at("bufferViews").at(oldView);
+            auto offset=view.value("byteOffset",0ULL);
+            auto length=view.at("byteLength").get<std::size_t>();
+            if(view.at("buffer")!=0 || offset>source.size() || length>source.size()-offset)
+                throw std::runtime_error("Draco embedded image bufferView out of range");
+            while(output.size()%4) output.push_back(0);
+            unsigned newIdx=static_cast<unsigned>(newViews.size());
+            newViews.push_back({{"buffer",0},{"byteOffset",output.size()},{"byteLength",length}});
+            output.insert(output.end(),source.begin()+offset,source.begin()+offset+length);
+            copiedViews[oldView]=newIdx;
+            image["bufferView"]=newIdx;
+        }
+    }
     doc["bufferViews"]=newViews;doc["accessors"]=newAccessors;bin=std::move(output);
     for(auto name:{"extensionsUsed","extensionsRequired"}) {if(!doc.contains(name)) doc[name]=Json::array();doc[name].push_back("KHR_draco_mesh_compression");}
-    Json result={{"lossy",true},{"speed",speed},{"positionBits",14},{"uvBits",12},{"maxWorldPositionErrorMeters",maxError},{"primitives",audit}};
+    Json result={{"lossy",true},{"speed",speed},{"positionBits",14},{"uvBits",12},{"maxWorldPositionErrorMeters",maxError},{"geometryStoredBytes",geometryStoredBytes},{"dracoViews",dracoViews},{"primitives",audit}};
     if(bounds.valid()) result["bounds"]={bounds.xMin(),bounds.yMin(),bounds.zMin(),bounds.xMax(),bounds.yMax(),bounds.zMax()};return result;
 }
 std::set<unsigned> validateDraco(const Json& doc,const Bytes& binary) {

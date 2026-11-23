@@ -82,6 +82,8 @@ struct Options {
     bool dracoGeometry=false;
     unsigned dracoSpeed=5;
     std::string textureFormat="original";
+    // 将贴图直接内嵌在 GLB bufferView 中，避免浏览器额外发起外置贴图 HTTP 请求，提升首帧加载速度。
+    bool embedTextures=false;
     // 实验：使用 KHR_mesh_quantization；非默认路径，误差单独报告。
     bool quantizeGeometry=false;
     // 独立轻量预览；不改变主产物的编码、误差与 sourceExact 语义。

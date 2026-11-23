@@ -138,6 +138,7 @@
           <div class="field"><label for="memoryBudgetMiB">内存预算（MiB）</label><input id="memoryBudgetMiB" type="number" min="0" step="1" value="0" placeholder="0 为不限"></div>
           <div class="field"><label for="dracoSpeed">Draco 压缩</label><select id="dracoSpeed"><option value="5">平衡</option><option value="0">质量优先</option><option value="10">速度优先</option></select></div>
           <div class="field"><label for="textureFormat">纹理编码</label><select id="textureFormat"><option value="original">原始纹理</option><option value="uastc">KTX2 · UASTC</option><option value="etc1s">KTX2 · ETC1S</option></select></div>
+          <div class="field"><label for="embedTextures">纹理封装</label><select id="embedTextures"><option value="false">外置文件（默认）</option><option value="true">内嵌到 GLB（首帧更快）</option></select></div>
           <div class="field"><label for="rebuildTop">顶层重建</label><select id="rebuildTop"><option value="false">保留原层级</option><option value="true">生成远景层</option></select></div>
           <div class="field"><label for="topSealDistance">焊缝距离（米）</label><input id="topSealDistance" type="number" min="0" max="2" step="0.05" value="2"></div>
           <div class="field"><label for="srs">坐标系</label><input id="srs" type="text" placeholder="自动识别"></div>

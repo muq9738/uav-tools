@@ -97,6 +97,23 @@ int main(int argc,char** argv) {
             require(primitives>=2 && reused>=1,"identical primitives must reuse a Draco stream");
             require(streams.size()<primitives,"shared streams reduce stored Draco payloads");
         }
+        {
+            Options embedOptions=o;embedOptions.dracoGeometry=true;embedOptions.compressGeometry=false;embedOptions.embedTextures=true;embedOptions.textureFormat="original";
+            embedOptions.output=root/"draco-embed-textures";
+            auto report=convert(embedOptions);
+            require(report["status"]=="complete" && report["embedTextures"]==true,"draco + embedTextures report");
+            require(!fs::exists(embedOptions.output/"textures") || fs::is_empty(embedOptions.output/"textures"),"embedTextures must not emit external texture files");
+            bool sawEmbeddedImage=false;
+            for(const auto& row:report["records"]) for(const auto& content:row["content"]) {
+                auto bytes=readBytes(embedOptions.output/content["uri"].get<std::string>());
+                auto doc=Json::parse(bytes.begin()+20,bytes.begin()+20+u32(bytes,12));
+                if(doc.contains("images")) for(const auto& img:doc["images"]) {
+                    require(img.contains("bufferView") && !img.contains("uri"),"embedded image must use bufferView without uri");
+                    sawEmbeddedImage=true;
+                }
+            }
+            require(sawEmbeddedImage,"expected at least one embedded image inside Draco GLB");
+        }
         o.dracoGeometry=false;
         for(auto format:{"uastc","etc1s"}) {
             o.textureFormat=format;o.output=root/format;auto report=convert(o);require(report["preserveEncodedTextures"]==false && report["lossyTextures"]==true,"Basis loss report");
