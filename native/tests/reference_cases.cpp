@@ -124,6 +124,54 @@ void sharedSameMatrixClosure(const fs::path& temp) {
     auto output=temp/"output";auto report=convert(options(input,output));require(report["files"]==4 && topRoots(output)==1,"间接共享引用闭包或根去重错误");
     auto drawing=expectDrawing(report,output,{0,10,10});require(drawing.uniqueContents.size()==2 && drawing.contentOccurrences==3,"同矩阵共享引用未复用内容");
 }
+void projectIndexWithData(const fs::path& temp) {
+    auto input=temp/"project";
+    writeNode(triangle(10),input/"Data/Block/Block.osgb");
+    writeNode(triangle(900),input/"Data/Unused/Unused.osgb");
+    writeNode(triangle(700),input/"standalone.osgb");
+    auto blocksOutput=temp/"blocks-output";
+    expectDrawing(convert(options(input,blocksOutput)),blocksOutput,{10,900});
+    auto index=new osg::MatrixTransform;
+    index->setMatrix(osg::Matrixd::translate(100,0,0));
+    index->addChild(triangle(0));
+    index->addChild(external("Data/Block/Block.osgb"));
+    writeNode(index,input/"Site.OSGB");
+    auto output=temp/"project-output";
+    auto report=convert(options(input,output));
+    expectDrawing(report,output,{100,110});
+    auto explicitOutput=temp/"index-output";
+    auto explicitReport=convert(options(input/"Site.OSGB",explicitOutput));
+    require(report["records"]==explicitReport["records"] && readBytes(output/"tileset.json")==readBytes(explicitOutput/"tileset.json"),
+            "选择项目目录和显式索引应产生相同的引用、矩阵和瓦片层级");
+    auto dataOutput=temp/"data-output";
+    expectDrawing(convert(options(input/"Data",dataOutput)),dataOutput,{10,900});
+}
+void contentlessIndexLevels(const fs::path& temp) {
+    auto input=temp/"input";
+    writeNode(triangle(20),input/"fine.osgb");
+    writeNode(external("fine.osgb"),input/"detail-index.osgb");
+    auto coarse=new osg::Group;
+    coarse->addChild(triangle(10));
+    coarse->addChild(external("detail-index.osgb"));
+    writeNode(coarse,input/"coarse.osgb");
+    auto branch=new osg::Group;
+    branch->addChild(external("coarse.osgb"));
+    branch->addChild(external("other.osgb"));
+    writeNode(triangle(30),input/"other.osgb");
+    writeNode(branch,input/"index.osgb");
+    writeNode(external("index.osgb"),input/"root.osgb");
+    auto output=temp/"output";
+    auto report=convert(options(input/"root.osgb",output));
+    expectDrawing(report,output,{10,20,30});
+    auto root=Json::parse(readBytes(output/"tileset.json")).at("root");
+    const auto& children=root.at("children");
+    require(root.contains("transform") && children.size()==2 && children[0].contains("content") && children[1].contains("content"),
+            "远景首层应直接选中两个可绘制分支");
+    const auto& fine=children[0].at("children");
+    require(fine.size()==1 && fine[0].contains("content") && !fine[0].contains("children"),
+            "粗层应直接细化到其原有的有效子瓦片");
+    require(report.at("records").size()==6,"逐源清单仍应包含三个纯索引文件");
+}
 void sharedDifferentMatrices(const fs::path& temp) {
     auto input=temp/"input";writeNode(triangle(10),input/"leaf.osgb");auto root=new osg::Group;root->addChild(triangle(0));
     for(double x:{100.0,300.0}) {auto transform=new osg::MatrixTransform;transform->setMatrix(osg::Matrixd::translate(x,0,0));transform->addChild(external("leaf.osgb"));root->addChild(transform);}
@@ -176,6 +224,7 @@ int main() {
     const std::vector<std::pair<std::string,std::function<void(const fs::path&)>>> cases={
         {"paged-slots-proxy",pagedSlotsAndProxy},{"shared-same-matrix-closure",sharedSameMatrixClosure},
         {"shared-different-matrices",sharedDifferentMatrices},{"relative-database-utf8",relativeDatabaseUtf8},{"case-paths",casePaths},
+        {"project-index-with-data",projectIndexWithData},{"contentless-index-levels",contentlessIndexLevels},
         {"node-mask",nodeMask},{"bad-parent-valid-child",badParentValidChild}};
     unsigned failed=0;
     for(const auto& item:cases) try {item.second(temp/item.first);std::cout<<"PASS "<<item.first<<'\n';} catch(const std::exception& error) {failed++;std::cerr<<"FAIL "<<item.first<<": "<<error.what()<<'\n';}

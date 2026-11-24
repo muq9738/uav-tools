@@ -18,7 +18,7 @@ ctest --test-dir build --output-on-failure
 
 以上是开发构建。正式分发使用仓库根目录的 `python3 app/scripts/build.py --sdk-prefix SDK_PREFIX`，统一构建、收集依赖和打包；命令行也使用包内的 `bin/osgb-tiles`。macOS 开发构建可加 `-DCMAKE_PREFIX_PATH=/opt/homebrew`；分发收集器会将依赖改为包内路径，不修改系统库。
 
-输入支持直接指定索引文件、包含索引的目录、`Data/分块名/分块名.osgb`。同目录中被其他文件引用的瓦片不会再作为独立根加载。缺少 `metadata.xml` 时必须明确提供坐标系：
+输入支持直接指定索引文件、包含索引的目录、`Data/分块名/分块名.osgb`。项目根目录有分页索引时，选择项目目录会沿索引转换，并保留索引里的几何和变换。直接选择 `Data/` 可转换其全部独立分块。分块目录旁的独立模型不会被误当作索引，同一目录中被引用的瓦片也会按引用关系去重。缺少 `metadata.xml` 时需要用 `--srs` 指定坐标系，下面的命令同时给出了原点。
 
 ```bash
 ./build/osgb-tiles /data/root.osgb /data/new-tiles \

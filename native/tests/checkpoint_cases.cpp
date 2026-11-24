@@ -57,6 +57,34 @@ std::map<std::string,std::string> assets(const fs::path& directory) {
     return result;
 }
 Json jsonFile(const fs::path& file) {return Json::parse(readBytes(file));}
+void missingExternalTexture(const fs::path& temp) {
+    auto image=new osg::Image;
+    image->allocateImage(1,1,1,GL_RGBA,GL_UNSIGNED_BYTE,1);
+    image->setFileName((temp/"missing.png").u8string());
+    image->setWriteHint(osg::Image::EXTERNAL_FILE);
+    auto node=mesh(image,3);
+    auto state=node->getOrCreateStateSet();
+    state->setTextureMode(0,GL_TEXTURE_2D,osg::StateAttribute::OFF);
+    Options o;o.srs="ENU:0,0";o.input=temp/"disabled.osgb";o.output=temp/"baseline";
+    nodeFile(node,o.input,true);
+    auto baseline=convert(o);
+    require(baseline.at("imageReferences")==0,"关闭且缺失的贴图不参与绘制");
+    o.output=temp/"resumed";o.checkpointDir=temp/"checkpoint";o.pauseFile=temp/"pause";
+    o.event=[&](const Json& event) {
+        if(event.value("stage","")=="convert" && event.at("done")==1) atomicWrite(o.pauseFile,{});
+    };
+    require(convert(o).at("status")=="paused","关闭的缺图应允许在文件完成后暂停");
+    fs::remove(o.pauseFile);o.event={};o.resume=true;
+    auto resumed=convert(o);
+    require(resumed.at("filesReused")==1 && assets(o.output)==assets(temp/"baseline"),"续转后应复用同一份无贴图 GLB");
+    o.resume=false;o.input=temp/"enabled.osgb";o.output=temp/"invalid";
+    state->setTextureMode(0,GL_TEXTURE_2D,osg::StateAttribute::ON);
+    nodeFile(node,o.input,true);
+    std::string error;
+    try {convert(o);} catch(const std::exception& e) {error=e.what();}
+    require(error.find("enabled.osgb")!=std::string::npos && !fs::exists(o.output) && !fs::exists(o.checkpointDir),
+            "启用的贴图缺失必须报出源文件并阻止发布");
+}
 void rejected(const Options& options,const std::string& reason) {
     bool failed=false;try {convert(options);} catch(const std::exception&) {failed=true;}
     require(failed,"必须拒绝 "+reason);require(!fs::exists(options.output/"tileset.json"),"拒绝时不能发布 "+reason);
@@ -68,6 +96,7 @@ int main(int argc,char** argv) {
         if(argc==3 && std::string(argv[1])=="--fixture") {fixture(fs::absolute(fs::u8path(argv[2])),true);return 0;}
         auto temp=fs::current_path()/("checkpoint-data-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
         fixture(temp);unsigned checks=0;
+        missingExternalTexture(temp/"missing-texture");++checks;
         require(sha256("")=="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" &&
                 sha256("abc")=="ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" &&
                 sha256(std::string(1000000,'a'))=="cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0","FIPS SHA-256 向量");checks++;

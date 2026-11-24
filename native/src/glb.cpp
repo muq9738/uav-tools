@@ -1,8 +1,8 @@
 #include "native_tiles.hpp"
 #include "codecs.hpp"
 #include "product_metadata.hpp"
+#include "source_attributes.hpp"
 #include <osg/AlphaFunc>
-#include <osg/Material>
 #include <osg/Texture2D>
 #include <osg/TexMat>
 #include <osg/TexEnv>
@@ -30,14 +30,7 @@ std::vector<float> arrayValues(const osg::Array* a,unsigned width,unsigned count
     std::vector<float> result(static_cast<std::size_t>(width)*count);
     for(unsigned i=0;i<count;++i) for(unsigned c=0;c<width;++c) {
         auto offset=static_cast<std::size_t>(overall?0:(perSet?primitive:i))*width+c;
-        double value=0;
-        switch(a->getDataType()) {
-            case GL_FLOAT:value=static_cast<const float*>(a->getDataPointer())[offset];break;
-            case GL_DOUBLE:value=static_cast<const double*>(a->getDataPointer())[offset];break;
-            case GL_UNSIGNED_BYTE:value=static_cast<const unsigned char*>(a->getDataPointer())[offset]/255.0;break;
-            case GL_UNSIGNED_SHORT:value=static_cast<const unsigned short*>(a->getDataPointer())[offset]/65535.0;break;
-            default:throw std::runtime_error("不支持的属性元素类型");
-        }
+        double value=attributeComponent(*a,offset);
         float converted=static_cast<float>(value);
         if(!std::isfinite(value)) throw std::runtime_error("几何包含非有限数值");
         if(a->getDataType()==GL_DOUBLE && static_cast<double>(converted)!=value)
@@ -234,13 +227,11 @@ struct Writer {
     int material(const osg::StateSet* state,bool hasUv) {
         Json pbr={{"baseColorFactor",Json::array({1,1,1,1})},{"metallicFactor",0},{"roughnessFactor",1}};
         if(state) {
-            auto m=dynamic_cast<const osg::Material*>(state->getAttribute(osg::StateAttribute::MATERIAL));
-            if(m) {auto color=m->getDiffuse(osg::Material::FRONT);pbr["baseColorFactor"]={color.r(),color.g(),color.b(),color.a()};}
+            if(auto color=diffuseColor(state)) pbr["baseColorFactor"]={color->r(),color->g(),color->b(),color->a()};
             for(unsigned unit=1;unit<state->getTextureAttributeList().size();++unit)
                 if((state->getTextureMode(unit,GL_TEXTURE_2D)&osg::StateAttribute::ON) && state->getTextureAttribute(unit,osg::StateAttribute::TEXTURE))
                     throw std::runtime_error("多个启用的纹理单元尚未等价映射，拒绝丢弃材质");
-            auto tex=dynamic_cast<const osg::Texture*>(state->getTextureAttribute(0,osg::StateAttribute::TEXTURE));
-            if(tex && (state->getTextureMode(0,GL_TEXTURE_2D)&osg::StateAttribute::ON)) {
+            if(auto tex=activeBaseColorTexture(state)) {
                 if(!hasUv) throw std::runtime_error("纹理材质缺少 UV");
                 auto env=dynamic_cast<const osg::TexEnv*>(state->getTextureAttribute(0,osg::StateAttribute::TEXENV));
                 if(env && env->getMode()!=osg::TexEnv::MODULATE)

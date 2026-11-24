@@ -1,12 +1,14 @@
 #include "native_tiles.hpp"
 #include "checkpoint.hpp"
 #include <osg/Geode>
+#include <osg/Material>
 #include <osg/MatrixTransform>
 #include <osg/PagedLOD>
 #include <osg/Texture2D>
 #include <osgDB/WriteFile>
 #include <osgDB/ReadFile>
 #include <png.h>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -61,6 +63,73 @@ std::set<std::string> uris(const Json& tile) {
     std::set<std::string> out;if(tile.contains("content")) out.insert(tile["content"]["uri"].get<std::string>());
     if(tile.contains("children")) for(const auto& c:tile["children"]) {auto sub=uris(c);out.insert(sub.begin(),sub.end());}return out;
 }
+void atlasMaterialFidelity(const fs::path& directory) {
+    const osg::Vec4us sourceColor(8192,32768,49152,50000);
+    const std::array<float,2> tint={0.25f,0.75f};
+    fs::create_directories(directory);
+    for(unsigned i=0;i<tint.size();++i) {
+        auto node=grid(2);
+        auto geometry=node->getDrawable(0)->asGeometry();
+        auto colors=new osg::Vec4usArray;
+        colors->push_back(sourceColor);
+        geometry->setColorArray(colors,osg::Array::BIND_OVERALL);
+        auto uv=new osg::Vec2usArray;
+        uv->assign(geometry->getVertexArray()->getNumElements(),osg::Vec2us(32768,16384));
+        geometry->setTexCoordArray(0,uv);
+        auto state=geometry->getOrCreateStateSet();
+        auto material=new osg::Material;
+        material->setDiffuse(osg::Material::FRONT_AND_BACK,{tint[i],1,0.5f,0.75f});
+        state->setAttribute(material);
+        auto texture=dynamic_cast<osg::Texture2D*>(state->getTextureAttribute(0,osg::StateAttribute::TEXTURE));
+        auto image=new osg::Image;image->allocateImage(1,2,1,GL_RGBA,GL_UNSIGNED_BYTE,1);
+        image->setOrigin(osg::Image::TOP_LEFT);
+        const unsigned char rows[]={255,0,0,255, 0,0,255,255};
+        std::memcpy(image->data(),rows,sizeof(rows));texture->setImage(image);
+        auto transform=new osg::MatrixTransform;
+        transform->setMatrix(osg::Matrixd::translate(i*32.,0,0));transform->addChild(node);
+        auto file=directory/(std::to_string(i)+".osgb");
+        osg::ref_ptr<osgDB::Options> raw=new osgDB::Options("WriteImageHint=IncludeData");
+        require(osgDB::writeNodeFile(*transform,file.u8string(),raw),"write raw atlas fixture");
+    }
+    Options o;o.input=directory;o.output=directory.parent_path()/"atlas-material-output";
+    o.srs="ENU:0,0";o.rebuildTop=true;o.compressGeometry=false;
+    auto report=convert(o);
+    require(report.at("topAncestors").size()==1,"two textured tiles must form one ancestor");
+    auto bytes=readBytes(o.output/report.at("topAncestors").at(0).at("content").get<std::string>());
+    auto doc=gltf(bytes);
+    std::set<float> tints;
+    for(const auto& node:doc.at("nodes")) {
+        auto matrix=node.at("matrix").get<std::vector<double>>();
+        for(const auto& primitive:doc.at("meshes").at(node.at("mesh").get<unsigned>()).at("primitives")) {
+            const auto& pbr=doc.at("materials").at(primitive.at("material").get<unsigned>()).at("pbrMetallicRoughness");
+            require(pbr.contains("baseColorTexture"),"rebuilt primitive lost its atlas");
+            const auto& attrs=primitive.at("attributes");
+            auto positions=attribute(bytes,doc,attrs.at("POSITION"));
+            auto colors=attribute(bytes,doc,attrs.at("COLOR_0"));
+            auto indices=attribute(bytes,doc,primitive.at("indices"));
+            for(auto index:indices) {
+                auto v=static_cast<unsigned>(index);
+                double east=positions[v*3]+matrix[12];
+                float expectedTint=east<16?tint[0]:tint[1];
+                require(pbr.at("baseColorFactor")==Json::array({expectedTint,1,0.5,0.75}),"tile inherited another tile's diffuse factor");
+                tints.insert(expectedTint);
+                for(unsigned c=0;c<4;++c) require(std::abs(colors[v*4+c]-sourceColor[c]/65535.)<1e-7,"rebuilt vertex color or alpha changed");
+            }
+        }
+    }
+    require(tints.size()==2,"both material regions must draw");
+    const auto& row=report.at("topAncestors").at(0);
+    require(row.at("bake").at("bakedPixels").get<unsigned>()>0,"atlas must contain sampled texels");
+    for(const auto& entry:doc.at("images")) {
+        auto data=readBytes(o.output/"content"/entry.at("uri").get<std::string>());
+        png_image png{};png.version=PNG_IMAGE_VERSION;
+        require(png_image_begin_read_from_memory(&png,data.data(),data.size()),"read material atlas");
+        png.format=PNG_FORMAT_RGBA;Bytes rgba(PNG_IMAGE_SIZE(png));
+        require(png_image_finish_read(&png,nullptr,rgba.data(),0,nullptr),"decode material atlas");png_image_free(&png);
+        for(std::size_t i=0;i<rgba.size();i+=4)
+            require(rgba[i]==255 && rgba[i+1]==0 && rgba[i+2]==0 && rgba[i+3]==255,"t=0.25 must sample the red first memory row");
+    }
+}
 void auditParent(const fs::path& output,const Json& row) {
     auto bytes=readBytes(output/row["content"].get<std::string>());auto doc=gltf(bytes);unsigned triangles=0,measurements=0;
     osg::Matrixd yToZ(1,0,0,0,0,0,1,0,0,-1,0,0,0,0,0,1);
@@ -100,6 +169,7 @@ int main(int argc,char** argv) {
         }
         if(argc==3 && std::string(argv[1])=="--fixture") {fixture(fs::absolute(argv[2]));return 0;}
         auto root=argc==3 && std::string(argv[1])=="--root"?fs::absolute(argv[2]):fs::current_path()/("top-tests-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+        atlasMaterialFidelity(root/"atlas-materials");
         fixture(root/"input");Options o;o.input=root/"input";o.output=root/"baseline";o.srs="ENU:0,0";o.compressGeometry=false;o.threads=1;
         auto baseline=convert(o);o.output=root/"rebuilt";o.rebuildTop=true;
         unsigned observed=0;

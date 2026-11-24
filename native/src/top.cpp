@@ -1,4 +1,5 @@
 #include "top.hpp"
+#include "source_attributes.hpp"
 #include <osg/Texture2D>
 #include <osg/TexMat>
 #include <osg/TexEnv>
@@ -53,18 +54,19 @@ unsigned attributeIndex(osg::Array* a,unsigned vertex,unsigned primitive) {
     return i;
 }
 Color colorAt(osg::Array* a,unsigned v,unsigned p) {
-    if(!a) return {1,1,1,1};unsigned i=attributeIndex(a,v,p);
-    if(auto b=dynamic_cast<osg::Vec4Array*>(a)) return Color(b->at(i));
-    if(auto b=dynamic_cast<osg::Vec3Array*>(a)) {auto c=b->at(i);return {c.x(),c.y(),c.z(),1};}
-    if(auto b=dynamic_cast<osg::Vec4ubArray*>(a)) {auto c=b->at(i);return {c.r()/255.,c.g()/255.,c.b()/255.,c.a()/255.};}
-    if(auto b=dynamic_cast<osg::Vec3ubArray*>(a)) {auto c=b->at(i);return {c.r()/255.,c.g()/255.,c.b()/255.,1};}
-    throw std::runtime_error("Top: unsupported color array");
+    Color color(1,1,1,1);
+    if(!a) return color;
+    const auto width=a->getDataSize();
+    if(width!=3 && width!=4) throw std::runtime_error("Top: color must be RGB or RGBA");
+    std::size_t start=std::size_t(attributeIndex(a,v,p))*width;
+    for(int c=0;c<width;++c) color[c]=attributeComponent(*a,start+c);
+    return color;
 }
 UV uvAt(osg::Array* a,unsigned v,unsigned p) {
-    if(!a) return {};unsigned i=attributeIndex(a,v,p);
-    if(auto b=dynamic_cast<osg::Vec2Array*>(a)) return UV(b->at(i));
-    if(auto b=dynamic_cast<osg::Vec2dArray*>(a)) return b->at(i);
-    throw std::runtime_error("Top: unsupported UV array");
+    if(!a) return {};
+    if(a->getDataSize()!=2) throw std::runtime_error("Top: UV must have two components");
+    std::size_t start=std::size_t(attributeIndex(a,v,p))*2;
+    return {attributeComponent(*a,start),attributeComponent(*a,start+1)};
 }
 Mesh collect(const std::vector<GeometryInput>& inputs,const SpatialReference* spatial,bool preserveUV=false) {
     Mesh m;
@@ -784,7 +786,8 @@ double wrap(double value,osg::Texture::WrapMode mode) {
 }
 Color texel(const Material& mat,const UV& uv) {
     auto& image=*mat.image;double u=wrap(uv.x(),mat.texture->getWrap(osg::Texture::WRAP_S));
-    double v=wrap(uv.y(),mat.texture->getWrap(osg::Texture::WRAP_T));if(image.getOrigin()==osg::Image::TOP_LEFT) v=1-v;
+    // OSG samples memory row zero at t=0, including images marked TOP_LEFT.
+    double v=wrap(uv.y(),mat.texture->getWrap(osg::Texture::WRAP_T));
     double x=u*image.s()-.5,y=v*image.t()-.5;int ix=static_cast<int>(std::floor(x)),iy=static_cast<int>(std::floor(y));double tx=x-ix,ty=y-iy;
     auto pixel=[&](int px,int py) {
         auto coord=[](int i,int size,osg::Texture::WrapMode mode) {if(mode==osg::Texture::REPEAT) return (i%size+size)%size;
@@ -845,24 +848,18 @@ Baked bake(const Mesh& m,const std::vector<Chart>& charts,const Options& options
         {"maxUnboundedNormalRayDistanceMeters",maxUnboundedRayDistance},{"closestSurfaceFallbackPixels",fallbacks},
         {"textureEncoding","PNG RGBA"},{"uvCharts",charts.size()}}};
 }
-// The glTF material of a rebuilt primitive is fully determined by these
-// non-texture state bits (see writeGlb): cull/blend/alpha-test and the TexEnv
-// mode. Materials that agree on all of them AND share the atlas can be emitted
-// as one primitive. This matches the reference's single-primitive ancestor
-// (fewer draw calls) without giving up our alpha channel or float vertex
-// colors -- both live in the atlas / vertex attributes, not in the split.
-std::string materialSignature(const Material& material) {
-    const osg::StateSet* state=material.state;
-    std::string key;
-    auto flag=[&](unsigned mode) {key+=state && (state->getMode(mode)&osg::StateAttribute::ON)?'1':'0';};
-    flag(GL_CULL_FACE);flag(GL_BLEND);flag(GL_ALPHA_TEST);
-    if(state) {
-        auto alpha=dynamic_cast<const osg::AlphaFunc*>(state->getAttribute(osg::StateAttribute::ALPHAFUNC));
-        if(alpha) key+=":"+std::to_string(alpha->getReferenceValue());
-        auto env=dynamic_cast<const osg::TexEnv*>(state->getTextureAttribute(0,osg::StateAttribute::TEXENV));
-        key+=env && env->getMode()!=osg::TexEnv::MODULATE?":nonmodulate":":modulate";
-    } else key+=":default";
-    return key;
+// Plain primitives keep their material. Atlas primitives can share a draw only
+// if replacing their StateSets with the first member's preserves its factors.
+using MaterialKey=std::tuple<unsigned,bool,bool,bool,float,osg::TexEnv::Mode,osg::Vec4>;
+MaterialKey materialKey(const Material& material,unsigned index) {
+    const auto* state=material.state.get();
+    auto enabled=[&](GLenum mode) {return state && (state->getMode(mode)&osg::StateAttribute::ON);};
+    auto alpha=state?dynamic_cast<const osg::AlphaFunc*>(state->getAttribute(osg::StateAttribute::ALPHAFUNC)):nullptr;
+    auto env=state?dynamic_cast<const osg::TexEnv*>(state->getTextureAttribute(0,osg::StateAttribute::TEXENV)):nullptr;
+    auto factor=diffuseColor(state);
+    return {material.image?0:index+1,enabled(GL_CULL_FACE),enabled(GL_BLEND),enabled(GL_ALPHA_TEST),
+            alpha?alpha->getReferenceValue():0.f,env?env->getMode():osg::TexEnv::MODULATE,
+            factor?*factor:osg::Vec4(1,1,1,1)};
 }
 std::vector<GeometryInput> outputGeometry(const Mesh& m,const std::vector<Chart>& charts,osg::Image* atlas) {
     std::vector<GeometryInput> result;
@@ -871,18 +868,13 @@ std::vector<GeometryInput> outputGeometry(const Mesh& m,const std::vector<Chart>
     atlasTexture->setWrap(osg::Texture::WRAP_S,osg::Texture::CLAMP_TO_EDGE);atlasTexture->setWrap(osg::Texture::WRAP_T,osg::Texture::CLAMP_TO_EDGE);
     // Group materials by their render-state signature. All groups that share
     // the atlas and one signature collapse into a single primitive.
-    std::map<std::string,std::vector<unsigned>> groups;
-    for(unsigned mi=0;mi<m.materials.size();++mi) {
-        const auto& material=m.materials[mi];
-        std::string key=material.image?("atlas|"+materialSignature(material)):("plain|"+std::to_string(mi));
-        groups[key].push_back(mi);
-    }
+    std::map<MaterialKey,std::vector<unsigned>> groups;
+    for(unsigned mi=0;mi<m.materials.size();++mi) groups[materialKey(m.materials[mi],mi)].push_back(mi);
     for(const auto& [key,materials]:groups) {
         auto g=new osg::Geometry;auto positions=new osg::Vec3dArray;
         auto uv=new osg::Vec2Array;osg::ref_ptr<osg::Vec4Array> colors=new osg::Vec4Array;auto indices=new osg::DrawElementsUInt(GL_TRIANGLES);
         std::map<std::pair<unsigned,unsigned>,unsigned> remap;
         std::set<unsigned> inGroup(materials.begin(),materials.end());
-        bool textured=false;
         for(unsigned ci=0;ci<charts.size();++ci) {
             const auto& c=charts[ci];
             for(auto fi:c.faces) if(inGroup.count(m.f[fi].material)) for(auto vertex:m.f[fi].v) {

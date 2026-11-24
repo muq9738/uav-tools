@@ -4,6 +4,7 @@
 #include "top.hpp"
 #include "preview.hpp"
 #include "product_metadata.hpp"
+#include "source_attributes.hpp"
 #include <osg/Geode>
 #include <osg/LOD>
 #include <osg/MatrixTransform>
@@ -552,10 +553,13 @@ struct Engine {
 struct InputReads final : osgDB::ReadFileCallback {
     Json inputs=Json::object();std::function<void()> checkCancelled;
     explicit InputReads(std::function<void()> check):checkCancelled(std::move(check)) {}
-    fs::path before(const std::string& name,const osgDB::Options* options) {
+    fs::path before(const std::string& name,const osgDB::Options* options,bool allowMissingImage=false) {
         if(checkCancelled) checkCancelled();
         auto resolved=osgDB::findDataFile(name,options);
-        if(resolved.empty()) throw std::runtime_error("无法绑定检查点外部输入: "+name);
+        if(resolved.empty()) {
+            if(allowMissingImage) return {};
+            throw std::runtime_error("无法绑定检查点外部输入: "+name);
+        }
         auto file=fs::canonical(fs::u8path(resolved));auto identity=fileIdentity(file);
         auto found=inputs.find(file.u8string());
         if(found!=inputs.end() && *found!=identity) throw std::runtime_error("扫描期间输入发生变化: "+file.u8string());
@@ -568,7 +572,10 @@ struct InputReads final : osgDB::ReadFileCallback {
         auto file=before(name,options);auto result=osgDB::Registry::instance()->readNodeImplementation(name,options);after(file);return result;
     }
     osgDB::ReaderWriter::ReadResult readImage(const std::string& name,const osgDB::Options* options) override {
-        auto file=before(name,options);auto result=osgDB::Registry::instance()->readImageImplementation(name,options);after(file);return result;
+        // OSG reads image slots before the drawable's inherited texture mode is known.
+        auto file=before(name,options,true);
+        if(file.empty()) return osgDB::ReaderWriter::ReadResult::FILE_NOT_FOUND;
+        auto result=osgDB::Registry::instance()->readImageImplementation(name,options);after(file);return result;
     }
     osgDB::ReaderWriter::ReadResult readObject(const std::string& name,const osgDB::Options* options) override {
         auto file=before(name,options);auto result=osgDB::Registry::instance()->readObjectImplementation(name,options);after(file);return result;
@@ -589,6 +596,10 @@ Json inputIdentity(const Options& options,const osg::Vec3d& origin,const std::ve
             auto node=osgDB::readRefNodeFile(file.u8string(),readOptions.get());
             if(!node) throw std::runtime_error("检查点扫描无法读取: "+file.u8string());
             std::vector<GeometryInput> meshes;collector.collect(node.get(),osg::Matrixd::identity(),nullptr,file,meshes,pending);
+            for(const auto& mesh:meshes) {
+                auto texture=activeBaseColorTexture(mesh.state.get());
+                if(texture && !texture->getImage(0)) throw std::runtime_error("材质引用了缺失纹理: "+file.u8string());
+            }
         }
         for(const auto& ref:pending.external) self(self,ref.file);mark=2;
     };
@@ -620,20 +631,64 @@ std::pair<std::string,std::string> readMetadata(const fs::path& path) {
     };
     return {field("SRS"),field("SRSOrigin")};
 }
+struct FileReference {std::string databasePath,name;};
+std::vector<FileReference> structuralReferences(const fs::path& file) {
+    osg::ref_ptr<osgDB::Options> options=new osgDB::Options;
+    options->setObjectCacheHint(osgDB::Options::CACHE_NONE);
+    auto node=osgDB::readRefNodeFile(file.u8string(),options.get());
+    if(!node) throw std::runtime_error("根发现时无法读取: "+file.u8string());
+    std::vector<FileReference> refs;
+    const auto collect=[&](auto&& self,osg::Node* current)->void {
+        auto collectSlots=[&](auto* group) {
+            for(unsigned i=0;i<group->getNumFileNames();++i) {
+                const auto& name=group->getFileName(i);
+                if(!name.empty()) refs.push_back({group->getDatabasePath(),name});
+            }
+            bool compact=compactExternalChildren(group->getNumChildren(),group->getNumFileNames());
+            for(unsigned i=0;i<group->getNumChildren();++i)
+                if(compact || i>=group->getNumFileNames() || group->getFileName(i).empty()) self(self,group->getChild(i));
+        };
+        if(auto paged=dynamic_cast<osg::PagedLOD*>(current)) collectSlots(paged);
+        else if(auto proxy=dynamic_cast<osg::ProxyNode*>(current)) collectSlots(proxy);
+        else if(auto group=current->asGroup())
+            for(unsigned i=0;i<group->getNumChildren();++i) self(self,group->getChild(i));
+    };
+    collect(collect,node.get());
+    return refs;
+}
 std::vector<fs::path> roots(const fs::path& input) {
     if(fs::is_regular_file(input)) return {fs::canonical(input)};
     auto lower=[](std::string s) {std::transform(s.begin(),s.end(),s.begin(),[](unsigned char c){return std::tolower(c);});return s;};
-    auto directory=fs::exists(input/"Data")?input/"Data":(fs::exists(input/"data")?input/"data":input);
+    auto directFiles=[&](const fs::path& dir,bool matchBlockName=false) {
+        std::vector<fs::path> files;
+        const auto block=lower(dir.filename().u8string());
+        for(const auto& item:fs::directory_iterator(dir)) {
+            const auto& path=item.path();
+            if(item.is_regular_file() && lower(path.extension().u8string())==".osgb" && (!matchBlockName || lower(path.stem().u8string())==block))
+                files.push_back(fs::canonical(path));
+        }
+        if(matchBlockName && files.size()>1) throw std::runtime_error("块目录含多个仅大小写不同的入口: "+dir.u8string());
+        return files;
+    };
+    auto projectFiles=directFiles(input);
+    auto directory=input;
+    if(fs::is_directory(input/"Data")) directory=input/"Data";
+    else if(fs::is_directory(input/"data")) directory=input/"data";
+    std::map<fs::path,std::vector<FileReference>> projectIndexes;
     std::vector<fs::path> result;
-    for(const auto& e:fs::directory_iterator(directory))
-        if(e.is_regular_file() && lower(e.path().extension().u8string())==".osgb") result.push_back(fs::canonical(e.path()));
-    if(result.empty()) for(const auto& e:fs::directory_iterator(directory)) if(e.is_directory()) {
-        std::vector<fs::path> matches;
-        for(const auto& f:fs::directory_iterator(e.path()))
-            if(f.is_regular_file() && lower(f.path().extension().u8string())==".osgb" && lower(f.path().stem().u8string())==lower(e.path().filename().u8string()))
-                matches.push_back(fs::canonical(f.path()));
-        if(matches.size()>1) throw std::runtime_error("块目录含多个仅大小写不同的入口: "+e.path().u8string());
-        if(!matches.empty()) result.push_back(matches[0]);
+    if(directory!=input) {
+        for(const auto& file:projectFiles) {
+            auto refs=structuralReferences(file);
+            if(!refs.empty()) {projectIndexes.emplace(file,std::move(refs));result.push_back(file);}
+        }
+        if(result.empty()) result=directFiles(directory);
+    } else result=std::move(projectFiles);
+    if(result.empty()) {
+        for(const auto& item:fs::directory_iterator(directory)) if(item.is_directory()) {
+            auto block=directFiles(item.path(),true);
+            if(!block.empty()) result.push_back(block.front());
+        }
+        if(result.empty() && directory!=input) result=std::move(projectFiles);
     }
     std::sort(result.begin(),result.end());
     if(result.empty()) throw std::runtime_error("未找到索引 OSGB 或 Data/分块名/分块名.osgb");
@@ -645,29 +700,13 @@ std::vector<fs::path> roots(const fs::path& input) {
         auto& mark=visited[file];
         if(mark==1) throw std::runtime_error("根发现时检测到循环引用: "+file.u8string());
         if(mark==2) return;mark=1;
-        std::vector<fs::path> refs;
-        {
-            osg::ref_ptr<osgDB::Options> options=new osgDB::Options;options->setObjectCacheHint(osgDB::Options::CACHE_NONE);
-            auto node=osgDB::readRefNodeFile(file.u8string(),options.get());
-            if(!node) throw std::runtime_error("根发现时无法读取: "+file.u8string());
-            const auto collect=[&](auto&& recurse,osg::Node* n)->void {
-                if(auto paged=dynamic_cast<osg::PagedLOD*>(n)) {
-                    for(unsigned i=0;i<paged->getNumFileNames();++i) if(!paged->getFileName(i).empty()) refs.push_back(resolveReference(file,paged->getDatabasePath(),paged->getFileName(i)));
-                    bool compact=compactExternalChildren(paged->getNumChildren(),paged->getNumFileNames());
-                    for(unsigned i=0;i<paged->getNumChildren();++i) if(compact || i>=paged->getNumFileNames() || paged->getFileName(i).empty()) recurse(recurse,paged->getChild(i));
-                    return;
-                }
-                if(auto proxy=dynamic_cast<osg::ProxyNode*>(n)) {
-                    for(unsigned i=0;i<proxy->getNumFileNames();++i) if(!proxy->getFileName(i).empty()) refs.push_back(resolveReference(file,proxy->getDatabasePath(),proxy->getFileName(i)));
-                    bool compact=compactExternalChildren(proxy->getNumChildren(),proxy->getNumFileNames());
-                    for(unsigned i=0;i<proxy->getNumChildren();++i) if(compact || i>=proxy->getNumFileNames() || proxy->getFileName(i).empty()) recurse(recurse,proxy->getChild(i));
-                    return;
-                }
-                if(auto group=n->asGroup()) for(unsigned i=0;i<group->getNumChildren();++i) recurse(recurse,group->getChild(i));
-            };
-            collect(collect,node.get());
+        auto known=projectIndexes.find(file);
+        auto refs=known==projectIndexes.end()?structuralReferences(file):std::move(known->second);
+        for(const auto& ref:refs) {
+            auto target=resolveReference(file,ref.databasePath,ref.name);
+            if(candidates.count(target)) referenced.insert(target);
+            self(self,target);
         }
-        for(const auto& ref:refs) {if(candidates.count(ref)) referenced.insert(ref);self(self,ref);}
         mark=2;
     };
     for(const auto& candidate:result) walk(walk,candidate);
@@ -806,22 +845,17 @@ Json convert(const Options& requested) {
             auto& uri=tile["content"]["uri"];auto value=uri.get<std::string>();
             if(value.rfind("../content/",0)==0) uri=value.substr(3);
         }
-        if(tile.contains("children")) {
-            for(auto& child:tile["children"]) self(self,child);
-            if(options.splitPagedLod) {
-                // Cesium 1.136 canTraverse applies SSE even to empty content. An
-                // internal empty grouping can stop refining and render a hole.
-                // All internal coordinates are already in the same local frame;
-                // splice out these structural groups instead of assigning fake errors.
-                Json children=Json::array();
-                for(auto& child:tile["children"]) {
-                    if(!child.contains("content") && !child.contains("transform") && child.contains("children"))
-                        for(auto& descendant:child["children"]) children.push_back(std::move(descendant));
-                    else children.push_back(std::move(child));
-                }
-                tile["children"]=std::move(children);
-            }
+        if(!tile.contains("children")) return;
+        // A pure index has no coarse drawing if a viewer stops refinement there.
+        // Its source transforms are already baked into each content instance.
+        Json children=Json::array();
+        for(auto& child:tile["children"]) {
+            self(self,child);
+            if(!child.contains("content") && !child.contains("transform") && child.contains("children")) {
+                for(auto& descendant:child["children"]) children.push_back(std::move(descendant));
+            } else children.push_back(std::move(child));
         }
+        tile["children"]=std::move(children);
     };
     relocateUris(relocateUris,root);
     Json previewSourceRoot;
