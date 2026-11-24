@@ -1,5 +1,12 @@
 # 更新日志
 
+## 0.6.9
+
+- Selecting a project folder now follows its OSGB paging index, preserving coarse geometry and tile placement. Select `Data/` directly to convert all independent blocks.
+- Fixed blank areas in distant Cesium views by linking drawable tiles across empty index levels. Zooming in still selects the original detail tiles.
+- Rebuilt overview tiles now preserve material tint, opacity, and texture orientation. They also support the same vertex color and UV formats as the source tile exporter, including 16-bit colors.
+- Conversion can now pause and resume when a disabled texture references a missing file. If a drawable uses the missing texture, the error identifies the affected OSGB file.
+
 ## 0.6.8
 
 - Skip empty `osg::Geometry` nodes (zero vertices or no drawable indices) and empty leaf OSGB tiles during conversion and lightweight preview generation instead of aborting the whole task, while still failing explicitly when the entire input contains no valid geometry.
