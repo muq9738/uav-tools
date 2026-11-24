@@ -32,6 +32,19 @@ osg::ref_ptr<osg::StateSet> inherited(osg::StateSet* parent,osg::StateSet* local
     auto result=new osg::StateSet;if(parent) result->merge(*parent);if(local) result->merge(*local);return result;
 }
 bool compactExternalChildren(unsigned children,unsigned files) {return children<files;}
+bool hasDrawableGeometry(const osg::Geometry* g) {
+    if(!g) return false;
+    auto vertices=g->getVertexArray();
+    if(!vertices || !vertices->getNumElements()) return false;
+    for(unsigned p=0;p<g->getNumPrimitiveSets();++p) {
+        auto ps=g->getPrimitiveSet(p);
+        if(!ps) continue;
+        if(auto lengths=dynamic_cast<const osg::DrawArrayLengths*>(ps)) {
+            for(auto length:*lengths) if(length>0) return true;
+        } else if(ps->getNumIndices()>0) return true;
+    }
+    return false;
+}
 void collectResident(osg::Node* node,const osg::Matrixd& parent,osg::StateSet* previous,
                      std::vector<GeometryInput>& meshes) {
     if(node->getNodeMask()==0) return;
@@ -44,11 +57,11 @@ void collectResident(osg::Node* node,const osg::Matrixd& parent,osg::StateSet* p
     if(auto geode=dynamic_cast<osg::Geode*>(node)) {
         for(unsigned i=0;i<geode->getNumDrawables();++i) {
             auto geometry=geode->getDrawable(i)->asGeometry();if(!geometry) throw std::runtime_error("预览: 非 Geometry Drawable");
-            meshes.push_back({geometry,inherited(state.get(),geometry->getStateSet()),matrix});
+            if(hasDrawableGeometry(geometry)) meshes.push_back({geometry,inherited(state.get(),geometry->getStateSet()),matrix});
         }
         return;
     }
-    if(auto geometry=dynamic_cast<osg::Geometry*>(node)) {meshes.push_back({geometry,state,matrix});return;}
+    if(auto geometry=dynamic_cast<osg::Geometry*>(node)) {if(hasDrawableGeometry(geometry)) meshes.push_back({geometry,state,matrix});return;}
     if(auto paged=dynamic_cast<osg::PagedLOD*>(node)) {
         unsigned resident=0;bool compact=compactExternalChildren(paged->getNumChildren(),paged->getNumFileNames());
         for(unsigned i=0;i<paged->getNumChildren();++i) {

@@ -448,6 +448,36 @@ int main() {
         failed=false;try {convert(canceledOptions);} catch(...) {failed=true;}
         require(failed && !fs::exists(temp/"out-canceled"),"取消必须清理事务且不发布结果");checks++;
         require(capabilities()["defaults"]["geometry"]=="meshopt" && capabilities()["protocolVersion"]==1,"CLI 与 App 能力契约");checks++;
+        // 空几何与空叶子 OSGB（如大疆智图边缘分块）应安全跳过，全空输入仍报错。
+        {
+            auto mixedGeode=new osg::Geode;
+            auto emptyNoVert=new osg::Geometry;
+            auto emptyZeroVert=new osg::Geometry;emptyZeroVert->setVertexArray(new osg::Vec3Array);
+            auto emptyNoPrim=new osg::Geometry;
+            auto dummyVerts=new osg::Vec3Array;dummyVerts->push_back({0,0,0});emptyNoPrim->setVertexArray(dummyVerts);
+            mixedGeode->addDrawable(emptyNoVert);mixedGeode->addDrawable(emptyZeroVert);mixedGeode->addDrawable(emptyNoPrim);
+            mixedGeode->addDrawable(triangle()->getDrawable(0));
+            writeNode(mixedGeode,temp/"mixed-empty-geom.osgb");
+            auto mixedReport=convert(options(temp/"mixed-empty-geom.osgb",temp/"out-mixed-empty-geom"));
+            require(mixedReport["trianglesAllLods"]==1,"混有空几何的文件应跳过空几何并保留有效三角形");checks++;
+
+            auto emptyLeaf=new osg::Geode;emptyLeaf->addDrawable(new osg::Geometry);
+            writeNode(emptyLeaf,temp/"empty-leaf.osgb");
+            auto parentWithEmptyLeaf=new osg::PagedLOD;
+            parentWithEmptyLeaf->addChild(triangle(),0,128);
+            parentWithEmptyLeaf->setFileName(1,"empty-leaf.osgb");parentWithEmptyLeaf->setRange(1,128,1e9);
+            parentWithEmptyLeaf->setFileName(2,"plain.osgb");parentWithEmptyLeaf->setRange(2,128,1e9);
+            writeNode(parentWithEmptyLeaf,temp/"parent-with-empty-leaf.osgb");
+            auto leafOpts=options(temp/"parent-with-empty-leaf.osgb",temp/"out-parent-empty-leaf");
+            leafOpts.preview=true;
+            auto leafReport=convert(leafOpts);
+            require(leafReport["files"]==2 && fs::exists(temp/"out-parent-empty-leaf/tileset.json") && fs::exists(temp/"out-parent-empty-leaf/preview/tileset.json"),
+                "含空叶子 OSGB 的 PagedLOD 应跳过空叶子并正常发布主成果与预览");checks++;
+
+            failed=false;
+            try {convert(options(temp/"empty-leaf.osgb",temp/"out-only-empty-leaf"));} catch(...) {failed=true;}
+            require(failed && !fs::exists(temp/"out-only-empty-leaf"),"全空输入必须报错且不发布输出");checks++;
+        }
         std::cout<<"通过 "<<checks<<" 项原生回归；测试数据: "<<temp<<'\n';return 0;
     } catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}
 }

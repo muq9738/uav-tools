@@ -275,6 +275,18 @@ int main() {
         try {convertFixture(input,output,unsupported[i].first,"30,40,100");}catch(const std::exception& e){rejected=std::string(e.what()).find(unsupported[i].second)!=std::string::npos;}
         require(rejected&&!fs::exists(output),"unsupported CRS/height must fail with specific cause and no publication");
     });
+    for(const char* localSrs:{"LOCAL"," local ","LOCAL_CS[\"arbitrary\"]"}) test(std::string("accept local non-georeferenced SRS ")+localSrs,[&,localSrs]{
+        SpatialReference ref(localSrs,{10,-20,5});
+        require(!ref.projected(),"LOCAL SRS must not run PROJ projection");
+        close(ref.toLocal({1,2,3}),{1,2,3},1e-12,"LOCAL toLocal is identity");
+        close(ref.normalToLocal({1,2,3},{0,0,1}),{0,0,1},1e-12,"LOCAL normalToLocal is identity");
+        auto node=geometry(small);auto safeName=std::string(localSrs[0]==' '?"l":(std::string(localSrs).size()>6?"w":"u"));
+        auto input=temp/("local-"+safeName+".osgb"),output=temp/("local-out-"+safeName);writeNode(node,input);
+        auto out=convertFixture(input,output,localSrs,"10,-20,5");
+        std::vector<osg::Vec3d> expected;
+        for(auto p:small) expected.push_back(inFrame(frame(0,0,0),p+osg::Vec3d(10,-20,5)));
+        verifyWorld(out,expected);
+    });
     std::cout<<"Max world error="<<largestWorldError<<" m, FLOAT bound="<<largestFloatBound<<" m, reported rounding="<<largestReportedRounding<<" m\n";
     std::cout<<"Spatial regression: "<<passed<<" passed, "<<failed<<" failed; fixtures: "<<temp<<'\n';return failed?1:0;
 }

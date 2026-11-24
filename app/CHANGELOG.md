@@ -1,5 +1,10 @@
 # 更新日志
 
+## 0.6.8
+
+- Skip empty `osg::Geometry` nodes (zero vertices or no drawable indices) and empty leaf OSGB tiles during conversion and lightweight preview generation instead of aborting the whole task, while still failing explicitly when the entire input contains no valid geometry.
+- Support non-georeferenced local coordinate systems (`SRS=LOCAL` and `LOCAL_CS[...]`) by preserving original metric local coordinates without PROJ distortion and anchoring the tileset root on the `(0, 0, 0)` ENU tangent frame for Cesium compatibility.
+
 ## 0.6.7
 
 - New tilesets and GLBs, including lightweight previews, now identify their generator as `uav tools v0.6.7`.

@@ -101,7 +101,20 @@ struct Pending {
     // their source records too, without adding their tiles a second time.
     std::vector<External> dependencies;
 };
-struct FileResult {fs::path file;osg::BoundingBoxd bounds;double error=0;Json root;};
+struct FileResult {fs::path file;osg::BoundingBoxd bounds;double error=0;Json root;bool empty=false;};
+bool hasDrawableGeometry(const osg::Geometry* g) {
+    if(!g) return false;
+    auto vertices=g->getVertexArray();
+    if(!vertices || !vertices->getNumElements()) return false;
+    for(unsigned p=0;p<g->getNumPrimitiveSets();++p) {
+        auto ps=g->getPrimitiveSet(p);
+        if(!ps) continue;
+        if(auto lengths=dynamic_cast<const osg::DrawArrayLengths*>(ps)) {
+            for(auto length:*lengths) if(length>0) return true;
+        } else if(ps->getNumIndices()>0) return true;
+    }
+    return false;
+}
 fs::path stripTrailingSeparator(fs::path p) {
     while(!p.empty() && p.filename().empty() && p!=p.root_path()) {
         auto parent=p.parent_path();
@@ -346,11 +359,11 @@ struct Engine {
         if(auto geode=dynamic_cast<osg::Geode*>(node)) {
             for(unsigned i=0;i<geode->getNumDrawables();++i) {
                 auto g=geode->getDrawable(i)->asGeometry();if(!g) throw std::runtime_error("OSGB 包含非 Geometry Drawable");
-                meshes.push_back({g,inherited(state.get(),g->getStateSet()),matrix});
+                if(hasDrawableGeometry(g)) meshes.push_back({g,inherited(state.get(),g->getStateSet()),matrix});
             }
             return;
         }
-        if(auto g=dynamic_cast<osg::Geometry*>(node)) {meshes.push_back({g,state,matrix});return;}
+        if(auto g=dynamic_cast<osg::Geometry*>(node)) {if(hasDrawableGeometry(g)) meshes.push_back({g,state,matrix});return;}
         if(auto paged=dynamic_cast<osg::PagedLOD*>(node)) {
             unsigned resident=0;
             for(unsigned i=0;i<paged->getNumFileNames();++i) if(!paged->getFileName(i).empty())
@@ -381,10 +394,11 @@ struct Engine {
         for(const auto& external:tile.external) {
             if(!references.insert(instanceKey(external.file,external.matrix)).second) continue;
             auto child=convertFile(external.file,external.matrix);
+            if(child.empty) continue;
             children.push_back(child.root);
             tile.bounds.expandBy(child.bounds);childError=std::max(childError,child.error);
         }
-        if(!tile.bounds.valid()) throw std::runtime_error("节点既无有效几何也无可达分页内容");
+        if(!tile.bounds.valid()) return Json();
         double error=tile.error;
         if(!children.empty()) {
             double extent=std::max({tile.bounds.xMax()-tile.bounds.xMin(),tile.bounds.yMax()-tile.bounds.yMin(),tile.bounds.zMax()-tile.bounds.zMin()});
@@ -466,11 +480,14 @@ struct Engine {
                                 {"compressedViews",result.compressedViews},{"images",result.imageAudit},
                                 {"originalFloatBytes",result.originalFloatBytes},{"quantizationErrorMeters",result.quantizationErrorMeters},{"draco",result.dracoAudit}});
                         }
-                        auto child=finish(part);pending.bounds.expandBy(part.bounds);
-                        pending.dependencies.insert(pending.dependencies.end(),part.external.begin(),part.external.end());
-                        pending.error=std::max(pending.error,part.error);children.push_back(child);
+                        auto child=finish(part);
+                        if(!child.is_null()) {
+                            pending.bounds.expandBy(part.bounds);
+                            pending.dependencies.insert(pending.dependencies.end(),part.external.begin(),part.external.end());
+                            pending.error=std::max(pending.error,part.error);children.push_back(child);
+                        }
                     }
-                    pending.json["children"]=children;
+                    if(!children.empty()) pending.json["children"]=children;
                 } else collect(node.get(),sourceTransform,nullptr,file,meshes,pending);
             } else collect(node.get(),sourceTransform,nullptr,file,meshes,pending);
             if(!meshes.empty()) {
@@ -502,7 +519,19 @@ struct Engine {
         }
         if(resume) resume->check();
         for(const auto& dependency:pending.dependencies) convertFile(dependency.file,dependency.matrix);
-        Json root=finish(pending);double error=root["geometricError"].get<double>();
+        Json root=finish(pending);
+        if(root.is_null()) {
+            if(resume && !saved.value("complete",false)) {
+                saved["complete"]=true;saved["empty"]=true;
+                resume->checkpoint.save(key,saved,{});
+            }
+            FileResult result{manifest,{},0,Json(),true};cache[key]=result;active.erase(file);
+            if(options.checkCancelled) options.checkCancelled();
+            if(!resume && options.event) options.event({{"type","file-complete"}});
+            if(resume) resume->check();
+            return result;
+        }
+        double error=root["geometricError"].get<double>();
         Json tile={{"asset",{{"version","1.1"},{"generator",kAssetGenerator}}},{"geometricError",error},{"root",root}};
         if(resume && saved.at("complete").get<bool>()) {
             if(Json::parse(readBytes(manifest))!=tile) throw std::runtime_error("检查点引用子树与已完成清单不一致");
@@ -511,7 +540,7 @@ struct Engine {
             if(resume) {saved["complete"]=true;resume->checkpoint.save(key,saved,recordAssets(record,true));}
         }
         records.push_back(record);
-        FileResult result{manifest,pending.bounds,error,root};cache[key]=result;active.erase(file);
+        FileResult result{manifest,pending.bounds,error,root,false};cache[key]=result;active.erase(file);
         if(options.checkCancelled) options.checkCancelled();
         if(!resume && options.event) options.event({{"type","file-complete"}});
         if(resume) resume->check();
@@ -750,7 +779,7 @@ Json convert(const Options& requested) {
         if(jobs.empty()) break;
         try {
             auto [result,audit]=jobs.front().get();
-            bounds.expandBy(result.bounds);error=std::max(error,result.error);children.push_back(result.root);
+            if(!result.empty) {bounds.expandBy(result.bounds);error=std::max(error,result.error);children.push_back(result.root);}
             for(auto& row:audit) records.push_back(std::move(row));
         } catch(const PauseRequested&) {stopping=true;}
           catch(...) {stopping=true;if(!failure) failure=std::current_exception();}
@@ -759,6 +788,7 @@ Json convert(const Options& requested) {
     if(failure) std::rethrow_exception(failure);
     if(options.checkCancelled) options.checkCancelled();
     if(resume) resume->check();
+    if(children.empty() || !bounds.valid()) throw std::runtime_error("节点既无有效几何也无可达分页内容");
     emit({{"type","progress"},{"stage","finalize"},{"done",processed},{"total",processed},{"unit","files"}});
     // 顶层根是无内容容器；保持 >= 2000 误差（与 rebuildTop 及外部查看器习惯一致），
     // 确保单层或小场景在任意初始视距下首帧都能立即遍历到首个有效内容层。

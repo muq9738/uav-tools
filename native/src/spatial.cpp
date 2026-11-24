@@ -1,6 +1,7 @@
 #include "native_tiles.hpp"
 #include <proj.h>
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <sstream>
 #include <stdexcept>
@@ -29,6 +30,14 @@ osg::Vec3d transform(PJ* operation,const osg::Vec3d& point) {
     if(proj_errno(operation)||!finite(result)) throw std::runtime_error("PROJ 坐标转换失败（坐标越界或所需格网不可用）");
     return result;
 }
+bool isLocalSrs(const std::string& raw) {
+    auto start=raw.find_first_not_of(" \t\r\n");
+    if(start==std::string::npos) return false;
+    auto end=raw.find_last_not_of(" \t\r\n");
+    std::string upper=raw.substr(start,end-start+1);
+    std::transform(upper.begin(),upper.end(),upper.begin(),[](unsigned char c){return static_cast<char>(std::toupper(c));});
+    return upper=="LOCAL" || upper.rfind("LOCAL_CS[",0)==0;
+}
 }
 struct SpatialReference::Impl {
     PJ_CONTEXT* context=nullptr;
@@ -52,6 +61,10 @@ SpatialReference::SpatialReference(const std::string& srs,const osg::Vec3d& orig
         }
         if(values.size()<2||values.size()>3) throw std::runtime_error("ENU 必须为纬度,经度[,高度]");
         impl_->placement=enuTransform(values[0],values[1],values.size()==3?values[2]:0,origin);
+    } else if(isLocalSrs(srs)) {
+        // 大疆智图 / ContextCapture 无地理参考的局部直角坐标系（LOCAL / LOCAL_CS[...]）：
+        // 保持原始米制局部坐标不做投影变形，锚定在 (0°, 0°, 0m) ENU 切平面，保证 Cesium 可正常预览与交互。
+        impl_->placement=enuTransform(0,0,0,origin);
     } else {
         if(srs.empty()) throw std::runtime_error("缺少 SRS，拒绝猜测坐标系");
         impl_->isProjected=true;impl_->context=proj_context_create();
