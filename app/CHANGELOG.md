@@ -1,5 +1,9 @@
 # 更新日志
 
+## 0.6.15
+
+- Orthophoto GeoTIFFs now use horizontal differencing with lossless Deflate compression. On a 1,006-file survey, the TIFF shrank from 152.35 MiB to 95.77 MiB with identical RGBA pixels, 5 cm grid, and georeferencing. Savings vary with image content.
+
 ## 0.6.14
 
 - Orthophoto rendering now uses the configured conversion threads to process separate rows. A bounded cache reuses projected vertices, mesh attributes, and textures across raster bands.

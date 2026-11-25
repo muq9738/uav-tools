@@ -51,6 +51,8 @@ with tempfile.TemporaryDirectory() as folder:
         shutil.copyfile(raster, path)
         info = json.loads(subprocess.check_output([gdalinfo, '-json', path]))
         assert info['driverShortName'] == 'GTiff'
+        assert info['metadata']['IMAGE_STRUCTURE']['COMPRESSION'] == 'DEFLATE'
+        assert info['metadata']['IMAGE_STRUCTURE']['PREDICTOR'] == '2'
         assert info['size'] == [report['width'], report['height']]
         assert [b['colorInterpretation'] for b in info['bands']] == ['Red', 'Green', 'Blue', 'Alpha']
         west, xstep, xrot, north, yrot, ystep = info['geoTransform']

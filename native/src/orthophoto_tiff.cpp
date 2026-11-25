@@ -28,6 +28,7 @@ void writeOrthophotoTiff(const fs::path& file,int width,int height,double west,d
     uint16_t alpha=EXTRASAMPLE_UNASSALPHA;
     set(TIFFTAG_EXTRASAMPLES,1,&alpha);
     set(TIFFTAG_COMPRESSION,COMPRESSION_ADOBE_DEFLATE);
+    set(TIFFTAG_PREDICTOR,PREDICTOR_HORIZONTAL);
     const auto rowsPerStrip=TIFFDefaultStripSize(tif.get(),0);
     set(TIFFTAG_ROWSPERSTRIP,rowsPerStrip);
 
