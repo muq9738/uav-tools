@@ -92,6 +92,20 @@ int main() {
         require(report["trianglesAllLods"]==1 && report["verticesAllLods"]==3,"无索引三角形保留");checks++;
         auto plainManifest=Json::parse(readBytes(temp/"out-plain/tileset.json"));
         require(plainManifest["root"]["geometricError"].get<double>()>0,"单层输入的主入口根误差必须为正，否则 Cesium 不遍历");checks++;
+        const auto& ortho=report.at("orthophoto");
+        require(ortho.at("width")==20 && ortho.at("height")==20 && ortho.at("metersPerPixel")==0.05 &&
+                ortho.at("upperLeftEdgeENU")==Json::array({0,1}) && ortho.at("localToEcef")==plainManifest["root"]["transform"],"正射影像像素网格与地理定位");
+        auto pixels=pngPixels(temp/"out-plain"/ortho.at("uri").get<std::string>());
+        auto at=[&](int x,int y,int channel){return pixels.at((y*20+x)*4+channel);};
+        require(pixels.size()==20*20*4 && at(16,2,3)==0 && at(16,19,3)==255 && at(16,19,1)==64,"北朝上、透明背景和顶点颜色");checks++;
+        auto scene=new osg::Group;
+        auto rooftop=new osg::MatrixTransform(osg::Matrixd::translate(0,0,10));
+        rooftop->addChild(triangle(true,false)); scene->addChild(rooftop); scene->addChild(triangle(true));
+        auto far=new osg::MatrixTransform(osg::Matrixd::translate(220,0,0));far->addChild(triangle(true));scene->addChild(far);
+        writeNode(scene,temp/"wide.osgb");auto wide=convert(options(temp/"wide.osgb",temp/"out-wide"));
+        auto widePixels=pngPixels(temp/"out-wide/orthophoto.png");
+        require(wide["orthophoto"]["width"]==4420 && widePixels.size()==4420*20*4 &&
+                widePixels[4*10+1]==255 && widePixels[4*30+3]==0 && widePixels[4*4410+1]==64,"全域保持 5 厘米像素、屋顶遮挡和跨块定位");checks++;
         auto uri=report["records"][0]["content"][0]["uri"].get<std::string>();auto doc=gltf(temp/"out-plain"/uri);
         require(doc["meshes"][0]["primitives"][0]["attributes"].contains("COLOR_0"),"顶点颜色丢失");checks++;
         auto zipped=convert(options(temp/"strip.osgb",temp/"out-strip"));

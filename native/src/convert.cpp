@@ -3,6 +3,7 @@
 #include "checkpoint.hpp"
 #include "top.hpp"
 #include "preview.hpp"
+#include "orthophoto.hpp"
 #include "product_metadata.hpp"
 #include "source_attributes.hpp"
 #include <osg/Geode>
@@ -858,6 +859,28 @@ Json convert(const Options& requested) {
         tile["children"]=std::move(children);
     };
     relocateUris(relocateUris,root);
+    auto orthoOptions=options;
+    orthoOptions.event=emit;
+    orthoOptions.checkCancelled=[&] { if(options.checkCancelled) options.checkCancelled(); if(resume) resume->check(); };
+    Engine orthoReader(options,originVector);
+    auto readOrthoMeshes=[&](const Json& row,const std::string& uri) {
+        auto file=fs::u8path(row.at("source").get<std::string>());
+        if(resume) resume->checkSource(file);
+        osg::ref_ptr<osgDB::Options> readOptions=new osgDB::Options;
+        readOptions->setObjectCacheHint(osgDB::Options::CACHE_NONE);
+        auto node=osgDB::readRefNodeFile(file.u8string(),readOptions);
+        if(!node) throw std::runtime_error("无法读取正射影像源: "+file.u8string());
+        auto matrix=row.at("sourceTransform").get<std::vector<double>>();
+        Pending pending; std::vector<GeometryInput> meshes;
+        auto split=uri.rfind("-split-");
+        if(split!=std::string::npos) {
+            auto index=std::stoul(uri.substr(split+7));
+            orthoReader.collect(node->asGroup()->getChild(index),osg::Matrixd(matrix.data()),node->getStateSet(),file,meshes,pending);
+        } else orthoReader.collect(node,osg::Matrixd(matrix.data()),nullptr,file,meshes,pending);
+        return meshes;
+    };
+    auto orthophoto=buildOrthophoto(root,records,bounds,spatial,orthoOptions,readOrthoMeshes);
+    if(checkpoint) derivedAssets["orthophoto.png"]=fileIdentity(options.output/"orthophoto.png");
     Json previewSourceRoot;
     if(options.preview) previewSourceRoot=root;
     Json topAudit=Json::array();
@@ -996,6 +1019,7 @@ Json convert(const Options& requested) {
         {"sourceContentsExact",!options.dracoGeometry && !options.quantizeGeometry && options.textureFormat=="original"},
         {"topGlbs",topAudit.size()},{"topLossy",options.rebuildTop && !topAudit.empty()},
         {"memoryThrottled",throttled},{"memoryResidentSampled",initialResident>0},{"records",records}};
+    report["orthophoto"]=orthophoto;
     if(options.preview) report["preview"]={
         {"status","complete"},{"entry","preview/tileset.json"},{"algorithm","mesh-preview-v2"},
         {"streamingLod",true},{"triangles",previewReport.at("triangles")},{"glbs",previewReport.at("glbs")},
@@ -1020,6 +1044,7 @@ Json convert(const Options& requested) {
     } catch(const PauseRequested&) {
         if(options.checkCancelled) options.checkCancelled();
         verifyCurrentInputs();
+        fs::remove(options.output/"orthophoto.png");
         fs::remove(options.output/"tileset.json");fs::remove(options.output/"conversion-report.json");
         fs::remove_all(topStaging);fs::remove_all(previewStaging);fs::remove_all(options.output/"preview");
         for(auto it=derivedAssets.begin();it!=derivedAssets.end();++it) fs::remove(options.output/fs::u8path(it.key()));

@@ -34,7 +34,7 @@ import (
 const defaultCompatHTTPSAddr = "0.0.0.0:42225"
 
 // version 由构建参数覆盖。
-var version = "0.6.9"
+var version = "0.6.10"
 
 func appVersion() string {
 	if v := strings.TrimSpace(mygo.App.Version()); v != "" && v != "0.0.0" {

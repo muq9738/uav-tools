@@ -20,6 +20,12 @@
 - SRS 投影与局部居中先使用双精度计算，最后才写入 glTF `FLOAT`。
 - 发布前逐项校验引用资产、buffer 范围、扩展声明与包围体，检查失败不发布完成产物。
 
+### 全域正射底图
+
+每次转换都会在 `tileset.json` 同目录生成 `orthophoto.png`。底图取自源模型最细层的三角面，北朝上、东朝右，空白区域透明。每像素覆盖 0.05 × 0.05 米，长边可以超过 4096 像素。转换器分带写入单张 PNG。
+
+`conversion-report.json` 的 `orthophoto` 字段提供 `uri`、`width`、`height`、`metersPerPixel`、`upperLeftEdgeENU` 和 `localToEcef`。`localToEcef` 与主 tileset 的根矩阵采用相同的列主序。把地理点按实际高程转成 ECEF，再乘逆矩阵得到局部东、北坐标 `(E, N)`。若左上外边界为 `(W, T)`，对应的零基像素列、行为 `floor((E-W)/0.05)`、`floor((T-N)/0.05)`。落在图片外的点应按实际裁剪范围处理。
+
 ### 按需启用优化
 
 Draco 顶点量化、KTX2 UASTC / ETC1S 纹理与远景父层重建均为**显式可选项**，可以自由组合。转换报告会分别记录有损参数、实际编码结果与测得误差，不将有损产物标成保真。

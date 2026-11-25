@@ -1,5 +1,10 @@
 # 更新日志
 
+## 0.6.10
+
+- Every OSGB conversion now writes a north-up `orthophoto.png` next to `tileset.json`, using the finest source meshes at 5 cm per pixel across the full model extent.
+- The conversion report records the image dimensions, upper-left pixel edge and local-to-ECEF transform for geographic cropping. The image is written in bands to limit memory use.
+
 ## 0.6.9
 
 - Selecting a project folder now follows its OSGB paging index, preserving coarse geometry and tile placement. Select `Data/` directly to convert all independent blocks.

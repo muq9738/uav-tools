@@ -779,23 +779,6 @@ struct Bvh {
         }
     }
 };
-double wrap(double value,osg::Texture::WrapMode mode) {
-    if(mode==osg::Texture::REPEAT) return value-std::floor(value);
-    if(mode==osg::Texture::MIRROR) {double x=value-2*std::floor(value/2);return x<=1?x:2-x;}
-    return std::clamp(value,0.,1.);
-}
-Color texel(const Material& mat,const UV& uv) {
-    auto& image=*mat.image;double u=wrap(uv.x(),mat.texture->getWrap(osg::Texture::WRAP_S));
-    // OSG samples memory row zero at t=0, including images marked TOP_LEFT.
-    double v=wrap(uv.y(),mat.texture->getWrap(osg::Texture::WRAP_T));
-    double x=u*image.s()-.5,y=v*image.t()-.5;int ix=static_cast<int>(std::floor(x)),iy=static_cast<int>(std::floor(y));double tx=x-ix,ty=y-iy;
-    auto pixel=[&](int px,int py) {
-        auto coord=[](int i,int size,osg::Texture::WrapMode mode) {if(mode==osg::Texture::REPEAT) return (i%size+size)%size;
-            if(mode==osg::Texture::MIRROR) {int a=(i%(size*2)+size*2)%(size*2);return a<size?a:size*2-1-a;}return std::clamp(i,0,size-1);};
-        return Color(image.getColor(coord(px,image.s(),mat.texture->getWrap(osg::Texture::WRAP_S)),coord(py,image.t(),mat.texture->getWrap(osg::Texture::WRAP_T)),0));
-    };
-    return pixel(ix,iy)*((1-tx)*(1-ty))+pixel(ix+1,iy)*(tx*(1-ty))+pixel(ix,iy+1)*((1-tx)*ty)+pixel(ix+1,iy+1)*(tx*ty);
-}
 struct Baked {osg::ref_ptr<osg::Image> image;Json audit;};
 Baked bake(const Mesh& m,const std::vector<Chart>& charts,const Options& options) {
     Bvh bvh(m.source);auto image=new osg::Image;image->allocateImage(imageSize,imageSize,1,GL_RGBA,GL_UNSIGNED_BYTE,1);image->setOrigin(osg::Image::BOTTOM_LEFT);
@@ -826,7 +809,7 @@ Baked bake(const Mesh& m,const std::vector<Chart>& charts,const Options& options
                 }
                 if(!hit.valid) {++missCount;continue;}
                 ++hitCount;maxDistance=std::max(maxDistance,hit.distance);const auto& source=m.source[hit.face];UV sourceUv;
-                for(unsigned k=0;k<3;++k) sourceUv+=source.uv[k]*hit.bary[k];Color color=texel(material,sourceUv);
+                for(unsigned k=0;k<3;++k) sourceUv+=source.uv[k]*hit.bary[k];Color color=sampleSourceTexture(*material.texture,sourceUv.x(),sourceUv.y());
                 auto pixel=image->data(x,y);for(unsigned k=0;k<4;++k) pixel[k]=static_cast<unsigned char>(std::lround(std::clamp(color[k],0.,1.)*255));
                 unsigned index=y*imageSize+x;if(owner[index]<0) filled.push_back(index);owner[index]=ci;
             }

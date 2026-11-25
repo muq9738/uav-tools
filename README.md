@@ -92,6 +92,8 @@ Open the printed local URL to create jobs, follow progress, inspect logs, pause/
 
 ## Output
 
+Each conversion writes a north-up `orthophoto.png` next to `tileset.json`. The image covers the full model at 0.05 meters per pixel, with transparent pixels outside the mesh. The `orthophoto` entry in `conversion-report.json` includes its dimensions, upper-left pixel edge in local east/north coordinates, and the local-to-ECEF transform used by the tileset.
+
 ```text
 new-tiles/
 ├── tileset.json             # 3D Tiles 1.1 entry point

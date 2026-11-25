@@ -27,7 +27,7 @@ target_include_directories(meshoptimizer_codec PUBLIC third_party/meshoptimizer)
 # 实验候选可独立链接；默认转换入口不调用它。
 add_library(osgb_compressed_image_candidate STATIC src/compressed_image.cpp)
 target_include_directories(osgb_compressed_image_candidate PUBLIC include)
-add_library(osgb_tiles_core src/image.cpp src/glb.cpp src/convert.cpp src/output_validation.cpp src/spatial.cpp src/meshopt.cpp src/runtime.cpp src/checkpoint.cpp src/top.cpp src/preview.cpp src/draco.cpp src/basis.cpp)
+add_library(osgb_tiles_core src/image.cpp src/glb.cpp src/orthophoto.cpp src/convert.cpp src/output_validation.cpp src/spatial.cpp src/meshopt.cpp src/runtime.cpp src/checkpoint.cpp src/top.cpp src/preview.cpp src/draco.cpp src/basis.cpp)
 target_include_directories(osgb_tiles_core PUBLIC include third_party ${OPENSCENEGRAPH_INCLUDE_DIRS})
 target_link_libraries(osgb_tiles_core PUBLIC ${OPENSCENEGRAPH_LIBRARIES} PNG::PNG LibXml2::LibXml2 Threads::Threads PROJ::proj meshoptimizer_codec osgb_compressed_image_candidate draco::draco basis_native)
 target_include_directories(osgb_tiles_core PRIVATE ${draco_SOURCE_DIR}/src ${CMAKE_BINARY_DIR}
