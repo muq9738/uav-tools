@@ -178,7 +178,7 @@ python3 app/scripts/build.py --verify-package app/dist/darwin-arm64
 ## 平台验证状态
 
 - **macOS arm64：** 已构建并验证桌面包、CLI、随包运行时与内嵌 Cesium 预览。
-- **Linux / Windows：** `.github/workflows/native-app.yml` 提供构建定义，但尚未完成完整 native、真实模型与桌面验收。
+- **构建与发布**。Windows x64 使用 GitHub Actions，macOS ARM64 在本机 Apple Silicon 上构建和验证。Linux 构建暂缓。详见[项目构建 skill](.agents/skills/project-build/SKILL.md)。
 - Windows 桌面需要 WebView2；Linux 桌面需要相应 WebKit 与桌面服务。便携 HTTP 模式的平台依赖更少。
 
 ## 文档

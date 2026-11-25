@@ -174,7 +174,7 @@ The test suite covers paging and references, geometry and coordinate handling, t
 ## Platform status
 
 - **macOS arm64:** built and validated with the packaged desktop app, CLI, runtime, and embedded Cesium preview.
-- **Linux and Windows:** build definitions are provided in `.github/workflows/native-app.yml`, but full native, model, and desktop validation has not been completed.
+- **Builds and releases:** GitHub Actions builds Windows x64. Build and verify macOS ARM64 on a local Apple Silicon Mac. Linux builds are paused. See the [project build skill](.agents/skills/project-build/SKILL.md).
 - Windows requires WebView2; Linux desktop use requires the applicable WebKit and desktop services. Portable HTTP mode has a smaller platform surface.
 
 ## Documentation

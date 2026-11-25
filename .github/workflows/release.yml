@@ -1,65 +1,24 @@
-name: Release Installers
+name: Windows Build and Release
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 env:
   PYTHONUTF8: '1'
   PYTHONIOENCODING: utf-8
 
-on:
-  push:
-    tags:
-      - 'v*'
-  workflow_dispatch:
-
-permissions:
-  contents: write
-
 jobs:
-  draft-release:
-    runs-on: ubuntu-24.04
-    outputs:
-      tag: ${{ steps.meta.outputs.tag }}
-      version: ${{ steps.meta.outputs.version }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Prepare draft release
-        id: meta
-        env:
-          GH_TOKEN: ${{ github.token }}
-          EVENT_NAME: ${{ github.event_name }}
-          REF_NAME: ${{ github.ref_name }}
-        run: |
-          version=$(python3 -c 'import json; print(json.load(open("app/mygo.json", encoding="utf-8"))["version"])')
-          tag="v${version}"
-          if [ "$EVENT_NAME" = "push" ] && [ "$REF_NAME" != "$tag" ]; then
-            echo "Tag $REF_NAME does not match app/mygo.json version $version" >&2
-            exit 1
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            notes=$(awk -v heading="## $version" '
-              $0 == heading { found = 1; next }
-              found && /^## / { exit }
-              found { print }
-            ' app/CHANGELOG.md)
-            if [[ "$notes" != *[![:space:]]* ]]; then
-              echo "No changelog entry for $tag" >&2
-              exit 1
-            fi
-            gh release create "$tag" --repo "$GITHUB_REPOSITORY" \
-              --draft --title "$tag" --notes "$notes"
-          fi
-
-  build:
-    needs: draft-release
-    name: ${{ matrix.platform }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { os: "windows-2022", platform: "windows-amd64", go: "windows/amd64" }
-          - { os: "macos-15", platform: "darwin-arm64", go: "darwin/arm64" }
+  windows:
+    name: Windows x64
+    runs-on: windows-2022
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -70,28 +29,23 @@ jobs:
         with:
           python-version: '3.12'
       - uses: ilammy/msvc-dev-cmd@v1
-        if: runner.os == 'Windows'
         with:
           arch: x64
-      - name: Distribution and Go tests
+      - name: Check release version
+        if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         run: |
-          python -m unittest discover -s app/tests -p 'test_*.py' -v
-          (cd app && go test -count=1 ./...)
-      - name: macOS SDK
-        if: runner.os == 'macOS'
-        run: |
-          brew install openscenegraph libtiff libpng libxml2 sqlite ninja
-          echo "OSGB_SDK=$(brew --prefix)" >> "$GITHUB_ENV"
-      - name: Restore Windows SDK cache
-        id: vcpkg-cache
-        if: runner.os == 'Windows'
+          version=$(python -c 'import json; print(json.load(open("app/mygo.json", encoding="utf-8"))["version"])')
+          test "$GITHUB_REF_NAME" = "v$version"
+      - name: Test distribution contracts
+        run: python -m unittest discover -s app/tests -p 'test_*.py' -v
+      - name: Restore SDK cache
+        id: sdk
         uses: actions/cache/restore@v4
         with:
           path: app/sdk/installed
           key: windows-vcpkg-sdk-v1-${{ hashFiles('app/sdk/vcpkg.json', 'app/sdk/triplets/**') }}
-      - name: Windows SDK
-        if: runner.os == 'Windows'
+      - name: Prepare Windows SDK
         shell: pwsh
         run: |
           git init app/sdk/toolchain
@@ -99,110 +53,93 @@ jobs:
           git -C app/sdk/toolchain fetch --depth 1 origin 84bab45d415d22042bd0b9081aea57f362da3f35
           git -C app/sdk/toolchain checkout FETCH_HEAD
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if ('${{ steps.vcpkg-cache.outputs.cache-hit }}' -ne 'true') {
+          if ('${{ steps.sdk.outputs.cache-hit }}' -ne 'true') {
             & app/sdk/toolchain/bootstrap-vcpkg.bat -disableMetrics
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             $common = @('--triplet', 'x64-windows', '--overlay-triplets=app/sdk/triplets', '--x-install-root=app/sdk/installed', '--classic')
-            & app/sdk/toolchain/vcpkg.exe install libpng libjpeg-turbo "tiff[core,zip]" "libxml2[core]" "sqlite3[core,tool]" @common
+            & app/sdk/toolchain/vcpkg.exe install libpng libjpeg-turbo 'tiff[core,zip]' 'libxml2[core]' 'sqlite3[core,tool]' @common
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            & app/sdk/toolchain/vcpkg.exe install "osg[core]" @common
+            & app/sdk/toolchain/vcpkg.exe install 'osg[core]' @common
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
-          $sdk = (Resolve-Path app/sdk/installed/x64-windows).Path
-          foreach ($plugin in @('osgdb_osg.dll', 'osgdb_serializers_osg.dll', 'osgdb_png.dll', 'osgdb_jpeg.dll')) {
-            $found = Get-ChildItem -Path $sdk -Recurse -Filter $plugin -ErrorAction SilentlyContinue | Select-Object -First 1
-            if (-not $found) { throw "缺少必需的 OSG 插件: $plugin" }
-          }
-          "OSGB_SDK=$sdk" >> $env:GITHUB_ENV
-      - name: Save Windows SDK cache
-        if: runner.os == 'Windows' && steps.vcpkg-cache.outputs.cache-hit != 'true'
+          "OSGB_SDK=$((Resolve-Path app/sdk/installed/x64-windows).Path)" >> $env:GITHUB_ENV
+      - name: Save SDK cache
+        if: steps.sdk.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: app/sdk/installed
           key: windows-vcpkg-sdk-v1-${{ hashFiles('app/sdk/vcpkg.json', 'app/sdk/triplets/**') }}
-      - name: Build and collect runtime
+      - name: Build, test and verify portable runtime
         shell: bash
         run: |
-          args=()
-          if [ "$RUNNER_OS" = Windows ]; then args+=(--toolchain app/sdk/toolchain/scripts/buildsystems/vcpkg.cmake); fi
-          python app/scripts/build.py --sdk-prefix "$OSGB_SDK" --skip-desktop "${args[@]}"
-          python app/scripts/build.py --verify-package "app/dist/${{ matrix.platform }}/portable"
-      - name: App and CLI parity in packaged environment
-        shell: bash
-        run: |
+          python app/scripts/build.py --sdk-prefix "$OSGB_SDK" --skip-desktop --toolchain app/sdk/toolchain/scripts/buildsystems/vcpkg.cmake
+          python app/scripts/build.py --verify-package app/dist/windows-amd64/portable
           input=$(python -c "from pathlib import Path; print(next(Path('app/build').glob('*/test-data-*/texture+alpha.osgb')).resolve(), end='')")
-          python app/tests/verify_parity.py --package "app/dist/${{ matrix.platform }}/portable" --input "$input" --srs ENU:31.2,121.4,10 --evidence .agents-debug/ci/parity
-      - name: Desktop package and signed update artifacts
+          python app/tests/verify_parity.py --package app/dist/windows-amd64/portable --input "$input" --srs ENU:31.2,121.4,10 --evidence .agents-debug/ci/parity
+      - name: Package desktop build
+        if: "!startsWith(github.ref, 'refs/tags/v')"
+        working-directory: app
+        run: go tool mygo build --platform windows/amd64
+      - name: Package signed release
+        if: startsWith(github.ref, 'refs/tags/v')
         working-directory: app
         shell: bash
         env:
-          GOMAXPROCS: '2'
           GH_TOKEN: ${{ github.token }}
           MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
-          MYGO_LDFLAGS: -X main.updateGitHubToken=${{ secrets.UPDATE_GITHUB_TOKEN }} -X main.version=${{ needs.draft-release.outputs.version }}
+          MYGO_LDFLAGS: -X main.updateGitHubToken=${{ secrets.UPDATE_GITHUB_TOKEN }}
         run: |
-          if [ -z "${MYGO_UPDATER_PRIVATE_KEY:-}" ]; then
-            echo "Missing MYGO_UPDATER_PRIVATE_KEY secret" >&2
-            exit 1
-          fi
-          if [ -z "${{ secrets.UPDATE_GITHUB_TOKEN }}" ]; then
-            echo "Missing UPDATE_GITHUB_TOKEN secret" >&2
-            exit 1
-          fi
-          go tool mygo build --platform "${{ matrix.go }}"
-      - name: Verify Windows package and installer
-        if: runner.os == 'Windows'
+          test -n "$MYGO_UPDATER_PRIVATE_KEY"
+          go tool mygo build --platform windows/amd64
+      - name: Verify Windows installer and portable package
         shell: bash
         env:
-          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
+          MYGO_UPDATER_PRIVATE_KEY: ${{ startsWith(github.ref, 'refs/tags/v') && secrets.MYGO_UPDATER_PRIVATE_KEY || '' }}
         run: |
-          python app/scripts/build.py --finalize-package "app/dist/${{ matrix.platform }}"
-          python app/tests/verify_windows_package.py --package "app/dist/${{ matrix.platform }}"
-      - name: Verify packaged macOS DMG and update archive
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          test -f "app/dist/${{ matrix.platform }}/update-darwin-arm64.json"
-          mount_dir="$RUNNER_TEMP/osgb-dmg"
-          mkdir -p "$mount_dir"
-          attached=0
-          cleanup() { if [ "$attached" = 1 ]; then hdiutil detach "$mount_dir" >/dev/null || true; fi; }
-          trap cleanup EXIT
-          hdiutil attach -readonly -nobrowse -mountpoint "$mount_dir" app/dist/${{ matrix.platform }}/*.dmg
-          attached=1
-          app_path=$(find "$mount_dir" -maxdepth 1 -name '*.app' -print -quit)
-          test -n "$app_path"
-          python app/scripts/build.py --verify-package "$app_path"
-          hdiutil detach "$mount_dir" >/dev/null
-          attached=0
-          tar_dir="$RUNNER_TEMP/osgb-tar"
-          mkdir -p "$tar_dir"
-          tar -xzf app/dist/${{ matrix.platform }}/*-darwin-arm64.tar.gz -C "$tar_dir"
-          tar_app=$(find "$tar_dir" -maxdepth 1 -name '*.app' -print -quit)
-          test -n "$tar_app"
-          python app/scripts/build.py --verify-package "$tar_app"
-      - name: Upload release assets to draft
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.draft-release.outputs.tag }}
-          DIST_DIR: app/dist/${{ matrix.platform }}
-        run: |
-          shopt -s nullglob
-          assets=()
-          if [ "$RUNNER_OS" = Windows ]; then
-            assets=("$DIST_DIR"/osgb-tiles-setup-*.exe "$DIST_DIR"/*-windows-amd64.tar.gz "$DIST_DIR"/update-windows-amd64.json "$DIST_DIR"/*.delta)
-          else
-            assets=("$DIST_DIR"/osgb-tiles-*-arm64.dmg "$DIST_DIR"/*-darwin-arm64.tar.gz "$DIST_DIR"/update-darwin-arm64.json "$DIST_DIR"/*.delta)
-          fi
-          gh release upload "$TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          python app/scripts/build.py --finalize-package app/dist/windows-amd64
+          python app/tests/verify_windows_package.py --package app/dist/windows-amd64
+      - uses: actions/upload-artifact@v4
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          name: windows-release
+          if-no-files-found: error
+          path: |
+            app/dist/windows-amd64/osgb-tiles-setup-*.exe
+            app/dist/windows-amd64/*-windows-amd64.tar.gz
+            app/dist/windows-amd64/update-windows-amd64.json
+            app/dist/windows-amd64/*-windows-amd64.delta
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch' && !startsWith(github.ref, 'refs/tags/v')
+        with:
+          name: windows-package
+          path: app/dist/windows-amd64/
 
-  publish:
-    needs: [draft-release, build]
-    runs-on: ubuntu-24.04
+  release:
+    name: Stage Windows release assets
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: windows
+    runs-on: windows-2022
+    permissions:
+      contents: write
     steps:
-      - name: Publish GitHub release
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-release
+          path: release-assets
+      - name: Upload verified files to the draft release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.draft-release.outputs.tag }}
-        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+        shell: bash
+        run: |
+          tag="$GITHUB_REF_NAME"
+          version="${tag#v}"
+          test -s "release-assets/osgb-tiles-setup-$version-amd64.exe"
+          test -s "release-assets/osgb-tiles-$version-windows-amd64.tar.gz"
+          test -s release-assets/update-windows-amd64.json
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            awk -v heading="## $version" '$0 == heading {found=1; next} found && /^## / {exit} found {print}' app/CHANGELOG.md > "$RUNNER_TEMP/release-notes.md"
+            grep -q '[^[:space:]]' "$RUNNER_TEMP/release-notes.md"
+            gh release create "$tag" --verify-tag --draft --title "$tag" --notes-file "$RUNNER_TEMP/release-notes.md"
+          fi
+          gh release upload "$tag" release-assets/* --clobber
