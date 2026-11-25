@@ -22,9 +22,11 @@
 
 ### 全域正射底图
 
-每次转换都会在 `tileset.json` 同目录生成 `orthophoto.tif`。转换器将最细层三角面投影到 0.05 米的像素网格，格网北朝上、东朝右，空白区域透明。整图采用分带写入和 Deflate 无损压缩，大图自动使用 BigTIFF。
+转换报告用 `orthophoto.status` 标记正射影像结果。生成成功为 `complete`；生成失败为 `failed`，`orthophoto.error` 记录原因。3D Tiles 通过校验后仍会正常发布。任务列表的“正射影像”可查看该次转换的影像详情。
 
-有地理参考的模型使用 GeoTIFF 1.1。文件内嵌像素外边界定位（PixelIsArea）及模型中心所在的 WGS 84 UTM 投影，极区使用 UPS。`LOCAL` 模型保留模型局部米制坐标。`conversion-report.json` 的 `orthophoto` 字段包含 `uri`、`width`、`height`、`metersPerPixel`、`crs` 和左上像素的外边界坐标 `upperLeftEdge`。将框选点换算到 `crs` 后，设点坐标为 `(x, y)`，左上外边界为 `(west, north)`，则零基像素列、行为 `floor((x-west)/0.05)`、`floor((north-y)/0.05)`。
+正射影像生成成功后，`tileset.json` 同目录会有 `orthophoto/` 子目录，内含同名的 `orthophoto.tif`、`orthophoto.tfw` 和 `orthophoto.prj`。TFW 记录像元大小和左上像元中心坐标，PRJ 以 WKT 描述底图坐标系。`LOCAL` 模型的 PRJ 声明米制局部工程坐标系。转换器将最细层三角面投影到 0.05 米的像素网格，格网北朝上、东朝右，空白区域透明。整图采用分带写入和 Deflate 无损压缩，大图自动使用 BigTIFF。
+
+有地理参考的模型使用 GeoTIFF 1.1。文件内嵌像素外边界定位（PixelIsArea）及模型中心所在的 WGS 84 UTM 投影，极区使用 UPS。`LOCAL` 模型保留模型局部米制坐标。`conversion-report.json` 的 `orthophoto` 字段包含三个文件的相对路径 `uri`、`worldFileUri`、`projectionUri`，以及 `width`、`height`、`metersPerPixel`、`crs` 和左上像素的外边界坐标 `upperLeftEdge`。将框选点换算到 `crs` 后，设点坐标为 `(x, y)`，左上外边界为 `(west, north)`，则零基像素列、行为 `floor((x-west)/0.05)`、`floor((north-y)/0.05)`。
 
 ### 按需启用优化
 
@@ -42,7 +44,7 @@ Draco 顶点量化、KTX2 UASTC / ETC1S 纹理与远景父层重建均为**显�
 
 ### 面向真实转换任务
 
-- 文件级并发与可选内存预算调度。
+- 可用逻辑 CPU 达到 4 个时，App 默认同时运行 2 个转换任务，其余任务排队。可用 `--max-parallel N` 调整任务数，每个任务默认使用 2 个转换线程。
 - 合作取消、结构化进度事件与持久化任务历史。
 - 内容寻址检查点，支持跨进程暂停和真正续转。
 - CLI 与 App 共用同一份随包原生二进制，保持默认参数和输出一致。

@@ -879,8 +879,23 @@ Json convert(const Options& requested) {
         } else orthoReader.collect(node,osg::Matrixd(matrix.data()),nullptr,file,meshes,pending);
         return meshes;
     };
-    auto orthophoto=buildOrthophoto(root,records,bounds,spatial,orthoOptions,readOrthoMeshes);
-    if(checkpoint) derivedAssets["orthophoto.tif"]=fileIdentity(options.output/"orthophoto.tif");
+    Json orthophoto;
+    try {
+        // Stage optional files outside the tileset tree so partial writes cannot be published.
+        auto scratchParent=checkpoint ? checkpoint->directory() : options.output.parent_path();
+        OutputTransaction scratch(scratchParent/"orthophoto");
+        orthoOptions.output=scratch.staging();
+        orthophoto=buildOrthophoto(root,records,bounds,spatial,orthoOptions,readOrthoMeshes);
+        if(checkpoint) for(const auto* path:{orthoTiffPath,orthoWorldPath,orthoPrjPath})
+            derivedAssets[path]=fileIdentity(orthoOptions.output/path);
+        fs::rename(orthoOptions.output/"orthophoto",options.output/"orthophoto");
+        orthophoto["status"]="complete";
+    } catch(const std::exception& error) {
+        orthoOptions.checkCancelled();
+        for(const auto* path:{orthoTiffPath,orthoWorldPath,orthoPrjPath}) derivedAssets.erase(path);
+        orthophoto={{"status","failed"},{"error",error.what()}};
+        emit({{"type","log"},{"level","warn"},{"message",std::string("正射影像生成失败：")+error.what()}});
+    }
     Json previewSourceRoot;
     if(options.preview) previewSourceRoot=root;
     Json topAudit=Json::array();
@@ -1044,7 +1059,7 @@ Json convert(const Options& requested) {
     } catch(const PauseRequested&) {
         if(options.checkCancelled) options.checkCancelled();
         verifyCurrentInputs();
-        fs::remove(options.output/"orthophoto.tif");
+        fs::remove_all(options.output/"orthophoto");
         fs::remove(options.output/"tileset.json");fs::remove(options.output/"conversion-report.json");
         fs::remove_all(topStaging);fs::remove_all(previewStaging);fs::remove_all(options.output/"preview");
         for(auto it=derivedAssets.begin();it!=derivedAssets.end();++it) fs::remove(options.output/fs::u8path(it.key()));

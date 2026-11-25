@@ -138,7 +138,7 @@ type Notification struct {
 type Config struct {
 	// DataDir 保存任务索引与日志；为空时不做持久化。
 	DataDir string
-	// MaxParallel 是同时运行的转换数，默认 1（转换本身吃满 CPU）。
+	// MaxParallel limits concurrent conversions. Zero selects the host default.
 	MaxParallel int
 	Runner      Runner
 	Now         func() time.Time
@@ -189,8 +189,14 @@ func New(cfg Config) (*Manager, error) {
 	if cfg.Runner == nil {
 		return nil, errors.New("jobs: 需要 Runner")
 	}
-	if cfg.MaxParallel <= 0 {
+	if cfg.MaxParallel < 0 {
+		return nil, errors.New("max-parallel 不能为负数")
+	}
+	if cfg.MaxParallel == 0 {
 		cfg.MaxParallel = 1
+		if runtime.GOMAXPROCS(0) >= 4 {
+			cfg.MaxParallel = 2
+		}
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
@@ -239,6 +245,9 @@ func New(cfg Config) (*Manager, error) {
 	return m, nil
 }
 
+// MaxParallel returns the effective queue limit.
+func (m *Manager) MaxParallel() int { return m.cfg.MaxParallel }
+
 // Submit 校验并提交一个任务。校验失败时不产生任务。
 func (m *Manager) Submit(spec Spec) (Job, error) {
 	normalized, err := normalize(spec)
@@ -250,20 +259,20 @@ func (m *Manager) Submit(spec Spec) (Job, error) {
 		m.mu.Unlock()
 		return Job{}, errors.New("服务正在关闭")
 	}
-	if normalized.Overwrite {
-		for _, existing := range m.records {
-			if existing.job.State.Terminal() {
-				continue
-			}
-			if pathsOverlap(existing.job.Spec.Output, normalized.Output) {
-				m.mu.Unlock()
-				return Job{}, errors.New("输出目录正被进行中的任务占用，无法覆盖")
-			}
-			if within(normalized.Output, existing.job.Spec.Input) {
-				m.mu.Unlock()
-				return Job{}, errors.New("输出目录包含进行中任务的输入目录，无法覆盖")
-			}
+	for _, existing := range m.records {
+		if existing.job.State.Terminal() {
+			continue
 		}
+		if pathsOverlap(existing.job.Spec.Output, normalized.Output) {
+			m.mu.Unlock()
+			return Job{}, errors.New("输出目录正被进行中的任务占用")
+		}
+		if normalized.Overwrite && within(normalized.Output, existing.job.Spec.Input) {
+			m.mu.Unlock()
+			return Job{}, errors.New("输出目录包含进行中任务的输入目录，无法覆盖")
+		}
+	}
+	if normalized.Overwrite {
 		if err := clearOutputDir(normalized.Output); err != nil {
 			m.mu.Unlock()
 			return Job{}, err

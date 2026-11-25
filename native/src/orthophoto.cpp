@@ -5,7 +5,10 @@
 #include <proj.h>
 #include <algorithm>
 #include <cmath>
+#include <iomanip>
 #include <limits>
+#include <locale>
+#include <sstream>
 #include <map>
 #include <set>
 
@@ -51,6 +54,27 @@ osg::Vec3d rasterVertex(const GeometryInput& mesh,const osg::Array& array,unsign
     auto source=osg::Vec3d(attributeComponent(array,3ULL*i),attributeComponent(array,3ULL*i+1),attributeComponent(array,3ULL*i+2))*mesh.matrix;
     if (!projection) return source;
     return project(projection,spatial.toLocal(source)*spatial.placement());
+}
+
+void writeSidecars(const fs::path& output,double west,double north,int epsg) {
+    // World files locate the center of the first pixel; GeoTIFF stores its outer edge.
+    std::ostringstream world;
+    world.imbue(std::locale::classic());
+    world << std::setprecision(std::numeric_limits<double>::max_digits10)
+          << resolution << "\n0\n0\n" << -resolution << '\n'
+          << west+resolution/2 << '\n' << north-resolution/2 << '\n';
+    const auto transform=world.str();
+    atomicWrite(output/orthoWorldPath,Bytes(transform.begin(),transform.end()));
+
+    std::string wkt=R"(LOCAL_CS["Model-local grid",LOCAL_DATUM["Model datum",10000],UNIT["metre",1],AXIS["Easting",EAST],AXIS["Northing",NORTH]])";
+    if (epsg) {
+        Projection crs(proj_create(nullptr,("EPSG:"+std::to_string(epsg)).c_str()),proj_destroy);
+        const char* definition=crs ? proj_as_wkt(nullptr,crs.get(),PJ_WKT1_GDAL,nullptr) : nullptr;
+        if (!definition) throw std::runtime_error("Cannot export the orthophoto projection");
+        wkt=definition;
+    }
+    wkt+='\n';
+    atomicWrite(output/orthoPrjPath,Bytes(wkt.begin(),wkt.end()));
 }
 
 int dimension(double span) {
@@ -172,7 +196,8 @@ Json buildOrthophoto(const Json& root,const Json& records,const osg::BoundingBox
     // Only the current band and its depth buffer are resident.
     auto budget=options.memoryBudgetBytes ? std::min<std::uint64_t>(64ULL<<20,options.memoryBudgetBytes/4) : 64ULL<<20;
     const int band=static_cast<int>(std::clamp<std::uint64_t>(budget/(sizeof(double)+4)/width,1,1024));
-    writeOrthophotoTiff(options.output/"orthophoto.tif",width,height,extent.xMin(),extent.yMax(),resolution,epsg,[&](const auto& writeRow) {
+    fs::create_directories((options.output/orthoTiffPath).parent_path());
+    writeOrthophotoTiff(options.output/orthoTiffPath,width,height,extent.xMin(),extent.yMax(),resolution,epsg,[&](const auto& writeRow) {
         for (int first=0;first<height;) {
             if (options.checkCancelled) options.checkCancelled();
             int rows=std::min(band,height-first);
@@ -191,7 +216,9 @@ Json buildOrthophoto(const Json& root,const Json& records,const osg::BoundingBox
     });
     if (options.event) options.event({{"type","progress"},{"stage","orthophoto"},{"done",height},{"total",height},{"unit","rows"}});
     if (options.checkCancelled) options.checkCancelled();
-    return {{"uri","orthophoto.tif"},{"width",width},{"height",height},{"metersPerPixel",resolution},
+    writeSidecars(options.output,extent.xMin(),extent.yMax(),epsg);
+    return {{"uri",orthoTiffPath},{"worldFileUri",orthoWorldPath},{"projectionUri",orthoPrjPath},
+            {"width",width},{"height",height},{"metersPerPixel",resolution},
             {"crs",epsg ? "EPSG:"+std::to_string(epsg) : "LOCAL"},{"upperLeftEdge",{extent.xMin(),extent.yMax()}}};
 }
 }

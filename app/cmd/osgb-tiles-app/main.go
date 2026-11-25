@@ -34,7 +34,7 @@ import (
 const defaultCompatHTTPSAddr = "0.0.0.0:42225"
 
 // version 由构建参数覆盖。
-var version = "0.6.11"
+var version = "0.6.12"
 
 func appVersion() string {
 	if v := strings.TrimSpace(mygo.App.Version()); v != "" && v != "0.0.0" {
@@ -104,7 +104,7 @@ func run() error {
 	tlsKey := flags.String("tls-key", "", "HTTPS 私钥 PEM 路径（与 --tls-cert 配合使用）")
 	dataDir := flags.String("data-dir", "", "数据目录，保存任务索引与日志")
 	sidecar := flags.String("sidecar", "", "转换器路径；默认在本程序旁或 PATH 中查找 osgb-tiles")
-	maxParallel := flags.Int("max-parallel", 1, "同时运行的转换数")
+	maxParallel := flags.Int("max-parallel", 0, "同时转换的任务上限（0 为自动，可用 CPU 数达到 4 时默认 2，否则 1）")
 	showVersion := flags.Bool("version", false, "输出版本后退出")
 	doctor := flags.Bool("doctor", false, "检查运行环境与转换器后退出")
 	if err := flags.Parse(os.Args[1:]); err != nil {
@@ -212,7 +212,7 @@ func run() error {
 		Version:       currentVersion,
 		Token:         *token,
 		DataDir:       *dataDir,
-		MaxParallel:   *maxParallel,
+		MaxParallel:   manager.MaxParallel(),
 		Desktop:       picker != nil,
 		HTTPSAddr:     activeHTTPSAddr,
 		CheckUpdates:  checkUpdates,

@@ -1,5 +1,11 @@
 # 更新日志
 
+## 0.6.12
+
+- Successful conversions now place the orthophoto TIFF, world file (TFW), and projection file (PRJ) together in `orthophoto/`. The conversion report includes their relative paths.
+- A raster export error is recorded separately so a validated 3D Tiles output can still be delivered. Open the orthophoto action in the task list to inspect raster details or the export error.
+- The app runs two conversions concurrently by default on hosts with at least four available logical CPUs. Use `--max-parallel` to set a different limit. Concurrent jobs reserve their output directories.
+
 ## 0.6.11
 
 - Export full-model orthophotos as `orthophoto.tif` with lossless RGBA pixels on a 5 cm grid. Georeferenced models use GeoTIFF 1.1 in WGS 84 UTM or UPS, with the projection and pixel placement embedded in the file.

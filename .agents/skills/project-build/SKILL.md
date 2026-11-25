@@ -19,7 +19,7 @@ Use English for commit messages, annotated tags, workflow names, and release not
 
 ## Local macOS build
 
-1. Check out the release commit on an Apple Silicon Mac. Install the SDK listed in the [build instructions](../../../app/README.md). For GeoTIFF changes, make `gdalinfo` and `gdallocationinfo` available to CMake and confirm that `native-orthophoto-gdal` runs.
+1. Check out the release commit on an Apple Silicon Mac. Install the SDK listed in the [build instructions](../../../app/README.md). For GeoTIFF changes, make `gdalinfo`, `gdallocationinfo`, and `gdalsrsinfo` available to CMake and confirm that `native-orthophoto-gdal` runs.
 2. Build the native runtime and portable application, then verify the package and exercise App/CLI parity with the generated textured OSGB fixture.
 
    ```bash

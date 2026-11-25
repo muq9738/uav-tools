@@ -2,6 +2,9 @@
 #include "native_tiles.hpp"
 
 namespace nt {
+inline constexpr char orthoTiffPath[]="orthophoto/orthophoto.tif";
+inline constexpr char orthoWorldPath[]="orthophoto/orthophoto.tfw";
+inline constexpr char orthoPrjPath[]="orthophoto/orthophoto.prj";
 using OrthoRowProducer = std::function<void(const std::function<void(unsigned char*)>&)>;
 void writeOrthophotoTiff(const fs::path& file,int width,int height,double west,double north,
                          double resolution,int epsg,const OrthoRowProducer& produce);

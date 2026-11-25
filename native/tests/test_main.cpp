@@ -120,7 +120,7 @@ int main(int argc,char** argv) {
         auto far=new osg::MatrixTransform(osg::Matrixd::translate(220,0,0));far->addChild(triangle(true));scene->addChild(far);
         writeNode(scene,temp/"wide.osgb");local.input=temp/"wide.osgb";local.output=temp/"out-wide";
         auto wide=convert(local);
-        auto widePixels=tiffPixels(local.output/"orthophoto.tif");
+        auto widePixels=tiffPixels(local.output/wide.at("orthophoto").at("uri").get<std::string>());
         require(wide["orthophoto"]["width"]==4420 && widePixels.size()==4420*20*4 &&
                 widePixels[4*10+1]==255 && widePixels[4*30+3]==0 && widePixels[4*4410+1]==64,"全域保持 5 厘米像素、屋顶遮挡和跨块定位");checks++;
         auto uri=report["records"][0]["content"][0]["uri"].get<std::string>();auto doc=gltf(temp/"out-plain"/uri);

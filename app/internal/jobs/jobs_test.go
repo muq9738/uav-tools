@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -203,6 +204,52 @@ func TestCancelRunningJob(t *testing.T) {
 	if err := manager.Cancel(job.ID); err == nil {
 		t.Fatal("已结束任务再次取消应报错")
 	}
+}
+
+func TestDefaultParallelLimit(t *testing.T) {
+	previous := runtime.GOMAXPROCS(4)
+	t.Cleanup(func() { runtime.GOMAXPROCS(previous) })
+	for _, tc := range []struct{ cpus, limit int }{{2, 1}, {4, 2}, {10, 2}} {
+		runtime.GOMAXPROCS(tc.cpus)
+		manager, err := New(Config{Runner: &fakeRunner{}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		limit := manager.MaxParallel()
+		manager.Close()
+		if limit != tc.limit {
+			t.Fatalf("with %d CPUs: got %d parallel jobs, want %d", tc.cpus, limit, tc.limit)
+		}
+	}
+}
+
+func TestParallelJobsReserveOutput(t *testing.T) {
+	runner := &fakeRunner{release: make(chan struct{})}
+	manager, err := New(Config{Runner: runner, MaxParallel: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	input, dir := newInput(t), t.TempDir()
+	for _, name := range []string{"a", "b"} {
+		job, err := manager.Submit(Spec{Input: input, Output: filepath.Join(dir, name)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, manager, job.ID, StateRunning)
+	}
+	for _, output := range []string{filepath.Join(dir, "a"), filepath.Join(dir, "a", "child")} {
+		if _, err := manager.Submit(Spec{Input: input, Output: output}); err == nil {
+			t.Fatalf("accepted overlapping output %s", output)
+		}
+	}
+	third, err := manager.Submit(Spec{Input: input, Output: filepath.Join(dir, "c")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, manager, third.ID, StateQueued)
+	close(runner.release)
+	waitFor(t, manager, third.ID, StateSucceeded)
 }
 
 func TestMaxParallelQueuesSecondJob(t *testing.T) {

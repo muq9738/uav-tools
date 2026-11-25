@@ -11,6 +11,7 @@ const state = {
   pending: new Set(),
   // 详情弹窗状态
   selected: null,
+  detailView: 'job',
   source: null,
   fallbackTimer: null,
   lines: [],
@@ -198,6 +199,7 @@ function renderJobs() {
         catch (error) { notify(error.message, true) }
       }))
     }
+    ops.append(linkButton('正射影像', () => openDetail(job.id, 'orthophoto'), job.report?.orthophoto?.status === 'failed' ? 'danger' : ''))
     ops.append(linkButton('详情', () => openDetail(job.id)))
     opsCell.append(ops)
 
@@ -390,8 +392,9 @@ function stopStreaming() {
   if (state.fallbackTimer) { clearInterval(state.fallbackTimer); state.fallbackTimer = null }
 }
 
-function openDetail(id) {
+function openDetail(id, view = 'job') {
   stopStreaming()
+  state.detailView = view
   state.selected = id
   state.lines = []
   state.sequence = 0
@@ -400,7 +403,7 @@ function openDetail(id) {
   const job = state.jobs.find(item => item.id === id)
   $('#detail-dialog').showModal()
   if (job) renderDetail(job)
-  startStreaming(id)
+  if (view === 'job' || ['queued', 'running', 'pausing'].includes(job?.state)) startStreaming(id)
 }
 
 $('#detail-dialog').addEventListener('close', () => {
@@ -409,7 +412,29 @@ $('#detail-dialog').addEventListener('close', () => {
   refreshJobs()
 })
 
+function orthophotoDetails(job) {
+  const image = job.report?.orthophoto
+  if (image?.status === 'failed') return detailFields([['生成状态', '生成失败'], ['失败原因', image.error || '未记录原因']])
+  if (image?.uri) {
+    const fields = [['生成状态', '已生成'], ['影像文件', image.uri], ['TFW 文件', image.worldFileUri], ['PRJ 文件', image.projectionUri],
+      ['影像尺寸', image.width && image.height ? `${image.width} × ${image.height} 像素` : null],
+      ['分辨率', image.metersPerPixel ? `${image.metersPerPixel} 米/像素` : null], ['坐标系', image.crs], ['输出目录', job.spec.output]]
+    return detailFields(fields.filter(([, value]) => value != null))
+  }
+  let message = { queued: '等待任务开始', running: '等待生成结果', pausing: '任务正在暂停', paused: '任务已暂停',
+    canceled: '任务已取消', succeeded: '该任务没有正射影像记录', failed: '任务失败，未发布影像' }[job.state]
+  if (job.state === 'running' && job.progress?.stage === 'orthophoto') {
+    message = job.progress.total ? `正在生成（${job.progress.done} / ${job.progress.total} 行）` : '正在生成'
+  }
+  return detailFields([['生成状态', message || '暂无记录']])
+}
+
 function renderDetail(job) {
+  if (state.detailView === 'orthophoto') {
+    $('#detail-title').textContent = `正射影像 · ${taskName(job)}`
+    $('#detail-body').replaceChildren(orthophotoDetails(job))
+    return
+  }
   const failed = job.state === 'failed'
   if (failed && !state.expanded) state.expanded = true
   if ($('#detail-title')) $('#detail-title').textContent = taskName(job)
@@ -500,6 +525,10 @@ function reportGrid(report) {
     })() : null],
     ['Draco 流复用', report.dracoStreams?.reused > 0 ? `复用 ${report.dracoStreams.reused} / ${report.dracoStreams.primitives} 条（几何不变，仅省体积）` : null],
   ].filter(([, value]) => value !== null && value !== undefined)
+  return detailFields(entries)
+}
+
+function detailFields(entries) {
   const dl = document.createElement('dl')
   dl.className = 'report'
   for (const [label, value] of entries) {

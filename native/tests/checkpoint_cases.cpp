@@ -103,6 +103,30 @@ int main(int argc,char** argv) {
         Options baseline;baseline.input=temp/"source";baseline.output=temp/"baseline";baseline.threads=1;
         auto full=convert(baseline);auto expected=assets(baseline.output);
         require(full["files"]==4 && full["glbs"]==4 && full["records"].size()==6 && full["originalEncodedImages"]==4,"fixture 应覆盖引用闭包、原图和矩阵实例");checks++;
+        require(full["orthophoto"]["status"]=="complete","Expected a completed orthophoto");
+        for(const std::string target:{"orthophoto.tif","orthophoto.prj"}) {
+            auto degraded=baseline;
+            degraded.checkpointDir=temp/("checkpoint-"+target);
+            degraded.output=temp/("out-"+target);
+            bool warned=false;
+            degraded.event=[&](const Json& event) {
+                if(event.value("type","")=="log" && event.value("level","")=="warn") warned=true;
+                // Fail during raster output, or block the PRJ after the TIFF has been written.
+                bool block=target=="orthophoto.prj" && event.value("stage","")=="orthophoto";
+                if(block) for(const auto& item:fs::directory_iterator(degraded.checkpointDir))
+                    if(item.path().filename().string().find(".orthophoto.building-")==0)
+                        fs::create_directories(item.path()/"orthophoto"/target);
+                if(target=="orthophoto.tif" && event.value("stage","")=="orthophoto")
+                    throw std::runtime_error("Injected TIFF write failure");
+            };
+            auto report=convert(degraded);
+            require(warned && report.at("status")=="complete" && report.at("orthophoto").at("status")=="failed" &&
+                    !report.at("orthophoto").at("error").get<std::string>().empty() && !report.at("orthophoto").contains("uri"),"Missing orthophoto failure details");
+            auto primary=expected;
+            for(const auto* name:{"orthophoto.tif","orthophoto.tfw","orthophoto.prj"}) primary.erase(std::string("orthophoto/")+name);
+            require(assets(degraded.output)==primary && !fs::exists(degraded.output/"orthophoto"),"Optional export failure changed the tileset output");
+            ++checks;
+        }
         unsigned sequence=0;
         auto pause=[&](unsigned boundary=1,unsigned threads=1,std::uint64_t budget=0) {
             Options options=baseline;auto name=std::to_string(sequence++);

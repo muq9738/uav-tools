@@ -36,7 +36,7 @@ Completed jobs open directly in the app's existing system WebView. The bundled C
 
 ### Built for real jobs
 
-- File-level parallelism and optional memory-budget scheduling.
+- On hosts with at least four available logical CPUs, the App runs two conversion jobs concurrently by default. Smaller hosts run one. Set `--max-parallel N` to override the queue limit. Each job defaults to two conversion threads and supports an optional memory budget.
 - Cooperative cancellation, structured progress events, and persistent job history.
 - Content-addressed checkpoints for pause and genuine resume across processes.
 - A single packaged native binary shared by the CLI and app, so their defaults and output stay aligned.
@@ -92,7 +92,9 @@ Open the printed local URL to create jobs, follow progress, inspect logs, pause/
 
 ## Output
 
-Each conversion writes `orthophoto.tif` next to `tileset.json`. It renders the finest meshes on a north-up 0.05 m grid with transparent background and lossless Deflate compression. For georeferenced models, the file embeds a GeoTIFF 1.1 PixelIsArea transform and the WGS 84 UTM zone at the model center (UPS in polar regions). `LOCAL` inputs retain model-local metre coordinates without an Earth CRS. Large rasters use BigTIFF. In `conversion-report.json`, `orthophoto.crs` identifies the raster coordinate system and `upperLeftEdge` gives the outer corner in that system. For a point `(x, y)` in the raster CRS, the zero-based pixel is `floor((x - west) / 0.05), floor((north - y) / 0.05)`.
+The task list's orthophoto action shows the raster details or the export error. The conversion report records `orthophoto.status` as `complete` or `failed`, with `orthophoto.error` on failure. A raster export failure allows a valid 3D Tiles conversion to finish.
+
+A successful raster export creates an `orthophoto/` directory next to `tileset.json`, containing `orthophoto.tif`, `orthophoto.tfw`, and `orthophoto.prj`. The world file locates the center of the upper-left pixel, and the PRJ describes the raster CRS in WKT, including a local engineering CRS for `LOCAL` inputs. The report lists the three relative paths as `uri`, `worldFileUri`, and `projectionUri`. The converter renders the finest meshes on a north-up 0.05 m grid with transparent background and lossless Deflate compression. For georeferenced models, the file embeds a GeoTIFF 1.1 PixelIsArea transform and the WGS 84 UTM zone at the model center (UPS in polar regions). `LOCAL` inputs retain model-local metre coordinates without an Earth CRS. Large rasters use BigTIFF. In `conversion-report.json`, `orthophoto.crs` identifies the raster coordinate system and `upperLeftEdge` gives the outer corner in that system. For a point `(x, y)` in the raster CRS, the zero-based pixel is `floor((x - west) / 0.05), floor((north - y) / 0.05)`.
 
 ```text
 new-tiles/

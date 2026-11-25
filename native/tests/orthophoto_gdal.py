@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 
 
-cli, fixture, gdalinfo, gdallocationinfo = sys.argv[1:]
+cli, fixture, gdalinfo, gdallocationinfo, gdalsrsinfo = sys.argv[1:]
 
 
 def geokeys(path):
@@ -44,7 +44,11 @@ with tempfile.TemporaryDirectory() as folder:
         subprocess.run([cli, source, out, '--srs', srs, '--origin', origin], check=True, stdout=subprocess.DEVNULL)
         report = json.loads((out / 'conversion-report.json').read_text(encoding='utf-8'))['orthophoto']
         path = root / f'standalone-{index}.tif'
-        shutil.copyfile(out / report['uri'], path)
+        raster, world, prj = (out / report[key] for key in ('uri', 'worldFileUri', 'projectionUri'))
+        assert [p.relative_to(out).as_posix() for p in (raster, world, prj)] == [
+            f'orthophoto/orthophoto.{ext}' for ext in ('tif', 'tfw', 'prj')]
+        assert set(raster.parent.iterdir()) == {raster, world, prj}
+        shutil.copyfile(raster, path)
         info = json.loads(subprocess.check_output([gdalinfo, '-json', path]))
         assert info['driverShortName'] == 'GTiff'
         assert info['size'] == [report['width'], report['height']]
@@ -52,6 +56,17 @@ with tempfile.TemporaryDirectory() as folder:
         west, xstep, xrot, north, yrot, ystep = info['geoTransform']
         assert (xstep, xrot, yrot, ystep) == (0.05, 0, 0, -0.05)
         assert math.dist(report['upperLeftEdge'], (west, north)) < 1e-7, (srs, west, north)
+        external = json.loads(subprocess.check_output([gdalinfo, '-json', '-oo', 'GEOREF_SOURCES=WORLDFILE', raster]))
+        assert math.dist(external['geoTransform'], info['geoTransform']) < 1e-8
+        coeffs = list(map(float, world.read_text(encoding='ascii').splitlines()))
+        assert len(coeffs) == 6 and coeffs[:4] == [0.05, 0, 0, -0.05]
+        assert math.dist(coeffs[4:], (west + 0.025, north - 0.025)) < 1e-8
+        crs = json.loads(subprocess.check_output([gdalsrsinfo, '-o', 'PROJJSON', prj]))
+        if epsg:
+            assert crs['id'] == {'authority': 'EPSG', 'code': epsg}
+        else:
+            assert crs['type'] == 'EngineeringCRS' and 'id' not in crs
+            assert [a['unit'] for a in crs['coordinate_system']['axis']] == ['metre', 'metre']
         keys = geokeys(path)
         if epsg:
             assert keys == (1, 1, 1, 3, 1024, 0, 1, 1, 1025, 0, 1, 1, 3072, 0, 1, epsg)
