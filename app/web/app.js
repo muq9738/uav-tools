@@ -678,7 +678,7 @@ for (const button of document.querySelectorAll('.rail-item')) {
 function formatUpdaterStatus(updater) {
   if (!updater) return state.config?.updaterAvailable ? '已启用' : '未启用'
   if (!updater.enabled) return '当前安装方式不支持自更新（请检查安装目录写权限）'
-  const details = [updater.tokenConfigured ? '已内置只读 GitHub 令牌' : 'GitHub 公开访问']
+  const details = ['GitHub 公开访问']
   if (updater.activeProxy) {
     try {
       details.push(`国内加速 ${new URL(updater.activeProxy).host}`)

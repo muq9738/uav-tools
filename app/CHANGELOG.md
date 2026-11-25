@@ -1,6 +1,8 @@
 # 更新日志
 
-## 0.6.12
+## 0.6.13
+
+- The desktop updater downloads public GitHub releases anonymously on both platforms.
 
 - Successful conversions now place the orthophoto TIFF, world file (TFW), and projection file (PRJ) together in `orthophoto/`. The conversion report includes their relative paths.
 - A raster export error is recorded separately so a validated 3D Tiles output can still be delivered. Open the orthophoto action in the task list to inspect raster details or the export error.

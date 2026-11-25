@@ -202,7 +202,6 @@ func TestUpdaterStatusInConfigAndDoctor(t *testing.T) {
 			return api.UpdaterInfo{
 				Enabled:          true,
 				AvailableVersion: "0.6.2",
-				TokenConfigured:  true,
 			}
 		},
 	})
@@ -231,7 +230,7 @@ func TestUpdaterStatusInConfigAndDoctor(t *testing.T) {
 			t.Fatalf("解析 %s 响应失败：%v", endpoint, err)
 		}
 		resp.Body.Close()
-		if payload.Updater == nil || !payload.Updater.Enabled || !payload.Updater.TokenConfigured || payload.Updater.AvailableVersion != "0.6.2" {
+		if payload.Updater == nil || !payload.Updater.Enabled || payload.Updater.AvailableVersion != "0.6.2" {
 			t.Fatalf("%s updater 状态不符合预期：%+v", endpoint, payload.Updater)
 		}
 	}

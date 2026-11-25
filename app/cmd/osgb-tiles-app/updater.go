@@ -39,10 +39,6 @@ var defaultChinaGitHubProxies = []string{
 	"https://git.yylx.win/",
 }
 
-// updateGitHubToken 在发布构建时通过 MYGO_LDFLAGS="-X main.updateGitHubToken=..." 注入，
-// 为仅对该仓库具备 Contents 只读权限的细粒度 PAT；源码中保持为空。
-var updateGitHubToken string
-
 type githubReleaseAsset struct {
 	Name               string `json:"name"`
 	URL                string `json:"url"`
@@ -62,13 +58,13 @@ type manifestProbe struct {
 	Signature string `json:"signature"`
 }
 
-// githubTokenUpdateSource 管理桌面端自动更新源：
-// - 在中国大陆网络环境下自动通过多节点竞速选用可用的 GitHub 代理加速（绝不向第三方代理发送令牌）；
+// githubUpdateSource 管理桌面端自动更新源：
+// - 在中国大陆网络环境下自动通过多节点竞速选用可用的 GitHub 代理加速；
 // - 支持通过 OSGB_TILES_UPDATE_PROXY 显式指定自定义代理前缀或设为 off 禁用代理；
-// - 代理不可用或处于海外环境时自动直连 GitHub（带嵌入式只读令牌兼容受限访问）。
-type githubTokenUpdateSource struct {
-	repo          string
-	token         string
+// - 代理不可用或处于海外环境时自动直连 GitHub。
+type githubUpdateSource struct {
+	repo string
+
 	apiBase       string
 	downloadBase  string
 	platform      string
@@ -85,16 +81,15 @@ type githubTokenUpdateSource struct {
 	cn204ProbeURL   string
 	intl204ProbeURL string
 
-	mu             sync.Mutex
-	byDownloadURL  map[string]string
-	byTagAsset     map[string]string
+	mu sync.Mutex
+
 	activeProxy    string
 	chinaChecked   bool
 	chinaDetected  bool
 	chinaCheckedAt time.Time
 }
 
-func newGitHubTokenSource(repo, token string) *githubTokenUpdateSource {
+func newGitHubUpdateSource(repo string) *githubUpdateSource {
 	tr := netproxy.Transport().Clone()
 	tr.ResponseHeaderTimeout = 15 * time.Second
 
@@ -114,9 +109,9 @@ func newGitHubTokenSource(repo, token string) *githubTokenUpdateSource {
 		proxies = customProxies
 	}
 
-	s := &githubTokenUpdateSource{
-		repo:            repo,
-		token:           token,
+	s := &githubUpdateSource{
+		repo: repo,
+
 		apiBase:         "https://api.github.com",
 		downloadBase:    "https://github.com",
 		platform:        runtime.GOOS + "-" + runtime.GOARCH,
@@ -127,14 +122,11 @@ func newGitHubTokenSource(repo, token string) *githubTokenUpdateSource {
 		cfTraceProbeURL: "https://www.cloudflare.com/cdn-cgi/trace",
 		cn204ProbeURL:   "https://connect.rom.miui.com/generate_204",
 		intl204ProbeURL: "https://connectivitycheck.gstatic.com/generate_204",
-		byDownloadURL:   map[string]string{},
-		byTagAsset:      map[string]string{},
 	}
 	s.detectChina = s.defaultDetectChina
 	s.client = &http.Client{
-		Transport:     tr,
-		Timeout:       10 * time.Minute,
-		CheckRedirect: s.checkRedirect,
+		Transport: tr,
+		Timeout:   10 * time.Minute,
 	}
 	s.probeClient = &http.Client{
 		Transport: probeTr,
@@ -187,20 +179,20 @@ func normalizeProxyPrefix(raw string) string {
 }
 
 // ActiveProxy 返回当前选中的国内加速代理前缀；直连时返回空字符串。
-func (s *githubTokenUpdateSource) ActiveProxy() string {
+func (s *githubUpdateSource) ActiveProxy() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.activeProxy
 }
 
 // ChinaMirrorActive 报告当前是否处于国内代理加速模式。
-func (s *githubTokenUpdateSource) ChinaMirrorActive() bool {
+func (s *githubUpdateSource) ChinaMirrorActive() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.activeProxy != "" || (s.chinaChecked && s.chinaDetected && !s.proxyDisabled)
 }
 
-func (s *githubTokenUpdateSource) setActiveProxy(proxyPrefix string) {
+func (s *githubUpdateSource) setActiveProxy(proxyPrefix string) {
 	s.mu.Lock()
 	changed := s.activeProxy != proxyPrefix
 	s.activeProxy = proxyPrefix
@@ -210,7 +202,7 @@ func (s *githubTokenUpdateSource) setActiveProxy(proxyPrefix string) {
 	}
 }
 
-func (s *githubTokenUpdateSource) shouldUseChinaProxy(ctx context.Context) bool {
+func (s *githubUpdateSource) shouldUseChinaProxy(ctx context.Context) bool {
 	if s.proxyDisabled || len(s.proxies) == 0 {
 		return false
 	}
@@ -239,7 +231,7 @@ func (s *githubTokenUpdateSource) shouldUseChinaProxy(ctx context.Context) bool 
 
 // defaultDetectChina 并发执行低延迟网络探测以判断是否处于中国大陆网络环境，
 // 优先采用国内可直连的 GeoIP 与 Cloudflare trace，并在所有网络探测均失败时回退时区/语言启发式判断。
-func (s *githubTokenUpdateSource) defaultDetectChina(ctx context.Context) bool {
+func (s *githubUpdateSource) defaultDetectChina(ctx context.Context) bool {
 	probeCtx, cancel := context.WithTimeout(ctx, chinaDetectTimeout)
 	defer cancel()
 
@@ -315,7 +307,7 @@ func verdictFromBool(known, china bool) struct {
 	}{known: known, china: china}
 }
 
-func (s *githubTokenUpdateSource) probeIPIP(ctx context.Context) (known bool, china bool) {
+func (s *githubUpdateSource) probeIPIP(ctx context.Context) (known bool, china bool) {
 	if s.ipipProbeURL == "" {
 		return false, false
 	}
@@ -360,7 +352,7 @@ func (s *githubTokenUpdateSource) probeIPIP(ctx context.Context) (known bool, ch
 	return true, true
 }
 
-func (s *githubTokenUpdateSource) probeCloudflareTrace(ctx context.Context) (known bool, china bool) {
+func (s *githubUpdateSource) probeCloudflareTrace(ctx context.Context) (known bool, china bool) {
 	if s.cfTraceProbeURL == "" {
 		return false, false
 	}
@@ -389,7 +381,7 @@ func (s *githubTokenUpdateSource) probeCloudflareTrace(ctx context.Context) (kno
 	return false, false
 }
 
-func (s *githubTokenUpdateSource) probeDomesticVsIntl(ctx context.Context) (known bool, china bool) {
+func (s *githubUpdateSource) probeDomesticVsIntl(ctx context.Context) (known bool, china bool) {
 	if s.cn204ProbeURL == "" || s.intl204ProbeURL == "" {
 		return false, false
 	}
@@ -405,7 +397,7 @@ func (s *githubTokenUpdateSource) probeDomesticVsIntl(ctx context.Context) (know
 	return false, false
 }
 
-func (s *githubTokenUpdateSource) probeReachable(ctx context.Context, target string) bool {
+func (s *githubUpdateSource) probeReachable(ctx context.Context, target string) bool {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return false
@@ -438,30 +430,16 @@ func isChinaTimezoneAndLocale() bool {
 	return false
 }
 
-func (s *githubTokenUpdateSource) checkRedirect(req *http.Request, via []*http.Request) error {
-	if len(via) >= 10 {
-		return http.ErrUseLastResponse
-	}
-	apiURL, err := url.Parse(s.apiBase)
-	// 重定向到 GitHub 对象存储（objects.githubusercontent.com）或第三方代理域名时必须剥离 Authorization，
-	// 既避免签名 URL 返回 400/401，也防止令牌泄露。
-	if err == nil && !strings.EqualFold(req.URL.Host, apiURL.Host) {
-		req.Header.Del("Authorization")
-		req.Header.Del("X-GitHub-Api-Version")
-	}
-	return nil
-}
-
-func (s *githubTokenUpdateSource) publicLatestManifestURL(manifestName string) string {
+func (s *githubUpdateSource) publicLatestManifestURL(manifestName string) string {
 	return strings.TrimSuffix(s.downloadBase, "/") + "/" + s.repo + "/releases/latest/download/" + manifestName
 }
 
-func (s *githubTokenUpdateSource) isRepoReleaseDownloadURL(rawURL string) bool {
+func (s *githubUpdateSource) isRepoReleaseDownloadURL(rawURL string) bool {
 	prefix := strings.TrimSuffix(s.downloadBase, "/") + "/" + s.repo + "/releases/download/"
 	return strings.HasPrefix(rawURL, prefix)
 }
 
-func (s *githubTokenUpdateSource) orderedProxies() []string {
+func (s *githubUpdateSource) orderedProxies() []string {
 	s.mu.Lock()
 	active := s.activeProxy
 	s.mu.Unlock()
@@ -482,7 +460,7 @@ func (s *githubTokenUpdateSource) orderedProxies() []string {
 	return out
 }
 
-func (s *githubTokenUpdateSource) Manifest(ctx context.Context, prereleases bool) (io.ReadCloser, error) {
+func (s *githubUpdateSource) Manifest(ctx context.Context, prereleases bool) (io.ReadCloser, error) {
 	manifestName := "update-" + s.platform + ".json"
 	publicManifestURL := s.publicLatestManifestURL(manifestName)
 	useProxy := s.shouldUseChinaProxy(ctx)
@@ -508,24 +486,23 @@ func (s *githubTokenUpdateSource) Manifest(ctx context.Context, prereleases bool
 	return nil, err
 }
 
-func (s *githubTokenUpdateSource) manifestDirect(ctx context.Context, prereleases bool, manifestName string) (io.ReadCloser, error) {
-	if s.token == "" && !prereleases {
-		return s.getStream(ctx, s.publicLatestManifestURL(manifestName), "", false)
+func (s *githubUpdateSource) manifestDirect(ctx context.Context, prereleases bool, manifestName string) (io.ReadCloser, error) {
+	if !prereleases {
+		return s.getStream(ctx, s.publicLatestManifestURL(manifestName), "")
 	}
-	release, err := s.findRelease(ctx, prereleases, manifestName)
+	release, err := s.findRelease(ctx, manifestName)
 	if err != nil {
 		return nil, err
 	}
-	s.cacheRelease(release)
 	for _, asset := range release.Assets {
 		if asset.Name == manifestName {
-			if prereleases && asset.BrowserDownloadURL != "" && s.shouldUseChinaProxy(ctx) {
+			if asset.BrowserDownloadURL != "" && s.shouldUseChinaProxy(ctx) {
 				if body, proxyErr := s.fetchManifestViaProxies(ctx, asset.BrowserDownloadURL); proxyErr == nil {
 					return body, nil
 				}
 			}
 			if asset.URL != "" {
-				return s.getStream(ctx, asset.URL, "application/octet-stream", true)
+				return s.getStream(ctx, asset.URL, "application/octet-stream")
 			}
 		}
 	}
@@ -534,7 +511,7 @@ func (s *githubTokenUpdateSource) manifestDirect(ctx context.Context, prerelease
 
 // fetchManifestViaProxies 并发竞速所有候选代理，选取最快返回合法更新清单 JSON 的节点，
 // 自动过滤返回 HTML 限流页或超时卡住的节点。
-func (s *githubTokenUpdateSource) fetchManifestViaProxies(ctx context.Context, publicURL string) (io.ReadCloser, error) {
+func (s *githubUpdateSource) fetchManifestViaProxies(ctx context.Context, publicURL string) (io.ReadCloser, error) {
 	candidates := s.orderedProxies()
 	if len(candidates) == 0 {
 		return nil, errors.New("未配置可用的国内加速代理")
@@ -569,9 +546,9 @@ func (s *githubTokenUpdateSource) fetchManifestViaProxies(ctx context.Context, p
 	return nil, fmt.Errorf("所有国内加速代理均不可用：%w", lastErr)
 }
 
-func (s *githubTokenUpdateSource) fetchValidatedManifest(ctx context.Context, targetURL string) ([]byte, error) {
-	// 第三方代理绝不携带仓库令牌。
-	stream, err := s.getStream(ctx, targetURL, "application/json", false)
+func (s *githubUpdateSource) fetchValidatedManifest(ctx context.Context, targetURL string) ([]byte, error) {
+
+	stream, err := s.getStream(ctx, targetURL, "application/json")
 	if err != nil {
 		return nil, err
 	}
@@ -590,17 +567,17 @@ func (s *githubTokenUpdateSource) fetchValidatedManifest(ctx context.Context, ta
 	return raw, nil
 }
 
-func (s *githubTokenUpdateSource) Open(ctx context.Context, rawURL string) (io.ReadCloser, error) {
+func (s *githubUpdateSource) Open(ctx context.Context, rawURL string) (io.ReadCloser, error) {
 	isRepoDownload := s.isRepoReleaseDownloadURL(rawURL)
 	if isRepoDownload && !s.proxyDisabled && len(s.proxies) > 0 && (s.ActiveProxy() != "" || s.shouldUseChinaProxy(ctx)) {
 		if stream, err := s.openViaProxies(ctx, rawURL); err == nil {
 			return stream, nil
 		}
 		// 全部代理失败时回退 GitHub 直连。
-		return s.openDirect(ctx, rawURL)
+		return s.getStream(ctx, rawURL, "")
 	}
 
-	stream, err := s.openDirect(ctx, rawURL)
+	stream, err := s.getStream(ctx, rawURL, "")
 	if err == nil {
 		return stream, nil
 	}
@@ -612,12 +589,12 @@ func (s *githubTokenUpdateSource) Open(ctx context.Context, rawURL string) (io.R
 	return nil, err
 }
 
-func (s *githubTokenUpdateSource) openViaProxies(ctx context.Context, rawURL string) (io.ReadCloser, error) {
+func (s *githubUpdateSource) openViaProxies(ctx context.Context, rawURL string) (io.ReadCloser, error) {
 	candidates := s.orderedProxies()
 	var lastErr error
 	for _, proxyPrefix := range candidates {
-		// 第三方代理绝不携带仓库令牌。
-		stream, err := s.getBinaryStream(ctx, proxyPrefix+rawURL, "", false)
+
+		stream, err := s.getBinaryStream(ctx, proxyPrefix+rawURL, "")
 		if err == nil {
 			s.setActiveProxy(proxyPrefix)
 			return stream, nil
@@ -630,32 +607,9 @@ func (s *githubTokenUpdateSource) openViaProxies(ctx context.Context, rawURL str
 	return nil, lastErr
 }
 
-func (s *githubTokenUpdateSource) openDirect(ctx context.Context, rawURL string) (io.ReadCloser, error) {
-	if s.token != "" {
-		if apiURL := s.lookupAssetAPI(ctx, rawURL); apiURL != "" {
-			return s.getStream(ctx, apiURL, "application/octet-stream", true)
-		}
-	}
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return nil, err
-	}
-	// 非本仓库 GitHub API 链接直接访问，不携带仓库令牌。
-	apiParsed, _ := url.Parse(s.apiBase)
-	sendAuth := s.token != "" && apiParsed != nil && strings.EqualFold(parsed.Host, apiParsed.Host)
-	accept := ""
-	if sendAuth {
-		accept = "application/octet-stream"
-	}
-	return s.getStream(ctx, rawURL, accept, sendAuth)
-}
-
-func (s *githubTokenUpdateSource) findRelease(ctx context.Context, prereleases bool, manifestName string) (githubRelease, error) {
-	if !prereleases {
-		return s.fetchRelease(ctx, strings.TrimSuffix(s.apiBase, "/")+"/repos/"+s.repo+"/releases/latest")
-	}
+func (s *githubUpdateSource) findRelease(ctx context.Context, manifestName string) (githubRelease, error) {
 	listURL := strings.TrimSuffix(s.apiBase, "/") + "/repos/" + s.repo + "/releases?per_page=30"
-	body, err := s.getStream(ctx, listURL, "application/vnd.github+json", true)
+	body, err := s.getStream(ctx, listURL, "application/vnd.github+json")
 	if err != nil {
 		return githubRelease{}, err
 	}
@@ -677,82 +631,7 @@ func (s *githubTokenUpdateSource) findRelease(ctx context.Context, prereleases b
 	return githubRelease{}, fmt.Errorf("未找到包含 %s 的已发布 Release", manifestName)
 }
 
-func (s *githubTokenUpdateSource) fetchRelease(ctx context.Context, releaseURL string) (githubRelease, error) {
-	body, err := s.getStream(ctx, releaseURL, "application/vnd.github+json", true)
-	if err != nil {
-		return githubRelease{}, err
-	}
-	defer body.Close()
-	var release githubRelease
-	if err := json.NewDecoder(io.LimitReader(body, 4<<20)).Decode(&release); err != nil {
-		return githubRelease{}, fmt.Errorf("解析 GitHub Release 元数据失败：%w", err)
-	}
-	return release, nil
-}
-
-func (s *githubTokenUpdateSource) cacheRelease(release githubRelease) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, asset := range release.Assets {
-		if asset.URL == "" {
-			continue
-		}
-		if asset.BrowserDownloadURL != "" {
-			s.byDownloadURL[asset.BrowserDownloadURL] = asset.URL
-		}
-		if release.TagName != "" && asset.Name != "" {
-			s.byTagAsset[release.TagName+"/"+asset.Name] = asset.URL
-		}
-	}
-}
-
-func (s *githubTokenUpdateSource) lookupAssetAPI(ctx context.Context, rawURL string) string {
-	s.mu.Lock()
-	if apiURL := s.byDownloadURL[rawURL]; apiURL != "" {
-		s.mu.Unlock()
-		return apiURL
-	}
-	s.mu.Unlock()
-
-	prefix := strings.TrimSuffix(s.downloadBase, "/") + "/" + s.repo + "/releases/download/"
-	if !strings.HasPrefix(rawURL, prefix) {
-		return ""
-	}
-	rest := strings.TrimPrefix(rawURL, prefix)
-	rawTag, rawName, ok := strings.Cut(rest, "/")
-	if !ok || rawTag == "" || rawName == "" || strings.Contains(rawName, "/") {
-		return ""
-	}
-	tag, err1 := url.PathUnescape(rawTag)
-	name, err2 := url.PathUnescape(rawName)
-	if err1 != nil || err2 != nil {
-		tag, name = rawTag, rawName
-	}
-
-	s.mu.Lock()
-	if apiURL := s.byTagAsset[tag+"/"+name]; apiURL != "" {
-		s.byDownloadURL[rawURL] = apiURL
-		s.mu.Unlock()
-		return apiURL
-	}
-	s.mu.Unlock()
-
-	release, err := s.fetchRelease(ctx, strings.TrimSuffix(s.apiBase, "/")+"/repos/"+s.repo+"/releases/tags/"+rawTag)
-	if err != nil {
-		return ""
-	}
-	s.cacheRelease(release)
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	apiURL := s.byTagAsset[tag+"/"+name]
-	if apiURL != "" {
-		s.byDownloadURL[rawURL] = apiURL
-	}
-	return apiURL
-}
-
-func (s *githubTokenUpdateSource) getBinaryStream(ctx context.Context, targetURL, accept string, sendAuth bool) (io.ReadCloser, error) {
+func (s *githubUpdateSource) getBinaryStream(ctx context.Context, targetURL, accept string) (io.ReadCloser, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
 	if err != nil {
 		return nil, err
@@ -760,10 +639,6 @@ func (s *githubTokenUpdateSource) getBinaryStream(ctx context.Context, targetURL
 	req.Header.Set("User-Agent", "mygo-updater")
 	if accept != "" {
 		req.Header.Set("Accept", accept)
-	}
-	if sendAuth && s.token != "" {
-		req.Header.Set("Authorization", "Bearer "+s.token)
-		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	}
 	resp, err := s.client.Do(req)
 	if err != nil {
@@ -781,7 +656,7 @@ func (s *githubTokenUpdateSource) getBinaryStream(ctx context.Context, targetURL
 	return resp.Body, nil
 }
 
-func (s *githubTokenUpdateSource) getStream(ctx context.Context, targetURL, accept string, sendAuth bool) (io.ReadCloser, error) {
+func (s *githubUpdateSource) getStream(ctx context.Context, targetURL, accept string) (io.ReadCloser, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
 	if err != nil {
 		return nil, err
@@ -789,10 +664,6 @@ func (s *githubTokenUpdateSource) getStream(ctx context.Context, targetURL, acce
 	req.Header.Set("User-Agent", "mygo-updater")
 	if accept != "" {
 		req.Header.Set("Accept", accept)
-	}
-	if sendAuth && s.token != "" {
-		req.Header.Set("Authorization", "Bearer "+s.token)
-		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	}
 	resp, err := s.client.Do(req)
 	if err != nil {

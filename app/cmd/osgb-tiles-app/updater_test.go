@@ -11,118 +11,50 @@ import (
 	"testing"
 )
 
-func TestGitHubTokenUpdateSourceManifestAndOpen(t *testing.T) {
-	const secretToken = "test-readonly-pat-value"
-	const archivePayload = "signed-archive-bytes"
-	const manifestPayload = `{"version":"0.6.0","url":"https://github.invalid/muq9738/uav-tools/releases/download/v0.6.0/osgb-tiles-0.6.0-windows-amd64.tar.gz","size":20,"signature":"sig"}`
-
-	var cdnSawAuth bool
-	var apiServer *httptest.Server
-	cdnServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func TestAnonymousPrereleaseUpdate(t *testing.T) {
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "" {
-			cdnSawAuth = true
-		}
-		io.WriteString(w, archivePayload)
-	}))
-	defer cdnServer.Close()
-
-	var tagQueries int
-	apiServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get("Authorization"); got != "Bearer "+secretToken {
-			t.Errorf("API 请求缺少 Bearer 令牌：%q (%s)", got, r.URL.Path)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
+			t.Error("unexpected credentials")
 		}
 		switch r.URL.Path {
-		case "/repos/muq9738/uav-tools/releases/latest":
-			json.NewEncoder(w).Encode(githubRelease{
-				TagName: "v0.6.0",
-				Assets: []githubReleaseAsset{
-					{
-						Name:               "update-windows-amd64.json",
-						URL:                apiServer.URL + "/repos/muq9738/uav-tools/releases/assets/101",
-						BrowserDownloadURL: "https://github.invalid/muq9738/uav-tools/releases/download/v0.6.0/update-windows-amd64.json",
-					},
-					{
-						Name:               "osgb-tiles-0.6.0-windows-amd64.tar.gz",
-						URL:                apiServer.URL + "/repos/muq9738/uav-tools/releases/assets/102",
-						BrowserDownloadURL: "https://github.invalid/muq9738/uav-tools/releases/download/v0.6.0/osgb-tiles-0.6.0-windows-amd64.tar.gz",
-					},
-				},
-			})
-		case "/repos/muq9738/uav-tools/releases/tags/v0.5.0":
-			tagQueries++
-			json.NewEncoder(w).Encode(githubRelease{
-				TagName: "v0.5.0",
-				Assets: []githubReleaseAsset{
-					{
-						Name:               "delta-v0.5.0.delta",
-						URL:                apiServer.URL + "/repos/muq9738/uav-tools/releases/assets/99",
-						BrowserDownloadURL: "https://github.invalid/muq9738/uav-tools/releases/download/v0.5.0/delta-v0.5.0.delta",
-					},
-				},
-			})
-		case "/repos/muq9738/uav-tools/releases/assets/101":
-			if got := r.Header.Get("Accept"); got != "application/octet-stream" {
-				t.Errorf("Manifest 资产请求 Accept 应为 application/octet-stream，实际为 %q", got)
-			}
-			io.WriteString(w, manifestPayload)
-		case "/repos/muq9738/uav-tools/releases/assets/102", "/repos/muq9738/uav-tools/releases/assets/99":
-			if got := r.Header.Get("Accept"); got != "application/octet-stream" {
-				t.Errorf("二进制资产请求 Accept 应为 application/octet-stream，实际为 %q", got)
-			}
-			http.Redirect(w, r, cdnServer.URL+"/blob/"+strings.TrimPrefix(r.URL.Path, "/"), http.StatusFound)
+		case "/repos/example/repo/releases":
+			json.NewEncoder(w).Encode([]githubRelease{{Assets: []githubReleaseAsset{{Name: "update-windows-amd64.json", URL: server.URL + "/manifest"}}}})
+		case "/manifest":
+			io.WriteString(w, "manifest")
+		case "/archive":
+			http.Redirect(w, r, "/blob", http.StatusFound)
+		case "/blob":
+			io.WriteString(w, "archive")
 		default:
 			http.NotFound(w, r)
 		}
 	}))
-	defer apiServer.Close()
-
-	src := newGitHubTokenSource("muq9738/uav-tools", secretToken)
-	src.apiBase = apiServer.URL
-	src.downloadBase = "https://github.invalid"
+	defer server.Close()
+	src := newGitHubUpdateSource("example/repo")
+	src.apiBase = server.URL
 	src.platform = "windows-amd64"
 	src.proxyDisabled = true
-	src.detectChina = func(context.Context) bool { return false }
-
-	body, err := src.Manifest(context.Background(), false)
+	body, err := src.Manifest(context.Background(), true)
 	if err != nil {
-		t.Fatalf("Manifest 失败：%v", err)
+		t.Fatal(err)
 	}
-	rawManifest, err := io.ReadAll(body)
-	body.Close()
-	if err != nil || string(rawManifest) != manifestPayload {
-		t.Fatalf("Manifest 内容不符：err=%v body=%q", err, string(rawManifest))
+	defer body.Close()
+	if raw, err := io.ReadAll(body); err != nil || string(raw) != "manifest" {
+		t.Fatalf("manifest %q: %v", raw, err)
 	}
-
-	// 已缓存下载 URL 的压缩包读取 + 重定向鉴权剥离验证
-	stream, err := src.Open(context.Background(), "https://github.invalid/muq9738/uav-tools/releases/download/v0.6.0/osgb-tiles-0.6.0-windows-amd64.tar.gz")
+	archive, err := src.Open(context.Background(), server.URL+"/archive")
 	if err != nil {
-		t.Fatalf("Open 压缩包失败：%v", err)
+		t.Fatal(err)
 	}
-	gotArchive, _ := io.ReadAll(stream)
-	stream.Close()
-	if string(gotArchive) != archivePayload {
-		t.Fatalf("压缩包内容不符：%q", string(gotArchive))
-	}
-	if cdnSawAuth {
-		t.Fatal("重定向到 CDN 主机时必须剥离 Authorization 头")
-	}
-
-	// 未在 latest 缓存中的历史版本增量包，应按 tag 查询并解析资产 API URL
-	deltaStream, err := src.Open(context.Background(), "https://github.invalid/muq9738/uav-tools/releases/download/v0.5.0/delta-v0.5.0.delta")
-	if err != nil {
-		t.Fatalf("Open 历史 tag 资产失败：%v", err)
-	}
-	gotDelta, _ := io.ReadAll(deltaStream)
-	deltaStream.Close()
-	if string(gotDelta) != archivePayload || tagQueries != 1 {
-		t.Fatalf("历史 tag 解析失败：tagQueries=%d data=%q", tagQueries, string(gotDelta))
+	defer archive.Close()
+	if raw, err := io.ReadAll(archive); err != nil || string(raw) != "archive" {
+		t.Fatalf("archive %q: %v", raw, err)
 	}
 }
 
 func TestChinaAutoProxyRaceAndFallback(t *testing.T) {
-	const secretToken = "must-never-leak-to-proxy"
+
 	const archiveURL = "https://github.invalid/muq9738/uav-tools/releases/download/v0.6.5/osgb-tiles-0.6.5-windows-amd64.tar.gz"
 	const manifestPayload = `{"version":"0.6.5","url":"` + archiveURL + `","size":16,"signature":"sig"}`
 	const archivePayload = "verified-archive"
@@ -177,7 +109,7 @@ func TestChinaAutoProxyRaceAndFallback(t *testing.T) {
 	}))
 	defer assetProxy.Close()
 
-	src := newGitHubTokenSource("muq9738/uav-tools", secretToken)
+	src := newGitHubUpdateSource("muq9738/uav-tools")
 	src.downloadBase = "https://github.invalid"
 	src.platform = "windows-amd64"
 	src.proxyDisabled = false
@@ -222,7 +154,7 @@ func TestChinaAutoProxyRaceAndFallback(t *testing.T) {
 }
 
 func TestChinaProxyAllFailFallsBackToDirectGitHub(t *testing.T) {
-	const secretToken = "direct-fallback-token"
+
 	const manifestPayload = `{"version":"0.6.5","url":"https://github.invalid/muq9738/uav-tools/releases/download/v0.6.5/a.tar.gz","size":4,"signature":"sig"}`
 
 	deadProxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -230,33 +162,15 @@ func TestChinaProxyAllFailFallsBackToDirectGitHub(t *testing.T) {
 	}))
 	defer deadProxy.Close()
 
-	var apiServer *httptest.Server
-	apiServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer "+secretToken {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/muq9738/uav-tools/releases/latest/download/update-windows-amd64.json" || r.Header.Get("Authorization") != "" {
+			t.Errorf("unexpected request %s", r.URL.Path)
 		}
-		switch r.URL.Path {
-		case "/repos/muq9738/uav-tools/releases/latest":
-			json.NewEncoder(w).Encode(githubRelease{
-				TagName: "v0.6.5",
-				Assets: []githubReleaseAsset{{
-					Name:               "update-windows-amd64.json",
-					URL:                apiServer.URL + "/repos/muq9738/uav-tools/releases/assets/1",
-					BrowserDownloadURL: "https://github.invalid/muq9738/uav-tools/releases/download/v0.6.5/update-windows-amd64.json",
-				}},
-			})
-		case "/repos/muq9738/uav-tools/releases/assets/1":
-			io.WriteString(w, manifestPayload)
-		default:
-			http.NotFound(w, r)
-		}
+		io.WriteString(w, manifestPayload)
 	}))
-	defer apiServer.Close()
-
-	src := newGitHubTokenSource("muq9738/uav-tools", secretToken)
-	src.apiBase = apiServer.URL
-	src.downloadBase = "https://github.invalid"
+	defer server.Close()
+	src := newGitHubUpdateSource("muq9738/uav-tools")
+	src.downloadBase = server.URL
 	src.platform = "windows-amd64"
 	src.proxies = []string{deadProxy.URL + "/"}
 	src.detectChina = func(context.Context) bool { return true }
@@ -350,7 +264,7 @@ func TestDefaultDetectChinaProbes(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			src := newGitHubTokenSource("muq9738/uav-tools", "")
+			src := newGitHubUpdateSource("muq9738/uav-tools")
 			src.ipipProbeURL = srv.URL + "/ipip"
 			src.cfTraceProbeURL = srv.URL + "/cf"
 			src.cn204ProbeURL = srv.URL + "/cn204"
@@ -383,7 +297,7 @@ func TestLiveChinaProxyUpdater(t *testing.T) {
 	if os.Getenv("OSGB_LIVE_UPDATE_TEST") != "1" {
 		t.Skip("set OSGB_LIVE_UPDATE_TEST=1 to run live network verification")
 	}
-	src := newGitHubTokenSource(updateGitHubRepo, "")
+	src := newGitHubUpdateSource(updateGitHubRepo)
 	src.platform = "windows-amd64"
 
 	ctx := context.Background()

@@ -87,7 +87,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
-          MYGO_LDFLAGS: -X main.updateGitHubToken=${{ secrets.UPDATE_GITHUB_TOKEN }}
         run: |
           test -n "$MYGO_UPDATER_PRIVATE_KEY"
           go tool mygo build --platform windows/amd64
