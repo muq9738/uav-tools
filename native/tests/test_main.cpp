@@ -117,12 +117,15 @@ int main(int argc,char** argv) {
         auto scene=new osg::Group;
         auto rooftop=new osg::MatrixTransform(osg::Matrixd::translate(0,0,10));
         rooftop->addChild(triangle(true,false)); scene->addChild(rooftop); scene->addChild(triangle(true));
-        auto far=new osg::MatrixTransform(osg::Matrixd::translate(220,0,0));far->addChild(triangle(true));scene->addChild(far);
+        auto far=new osg::MatrixTransform(osg::Matrixd::translate(220,0.5,0));far->addChild(triangle(true));scene->addChild(far);
         writeNode(scene,temp/"wide.osgb");local.input=temp/"wide.osgb";local.output=temp/"out-wide";
         auto wide=convert(local);
         auto widePixels=tiffPixels(local.output/wide.at("orthophoto").at("uri").get<std::string>());
-        require(wide["orthophoto"]["width"]==4420 && widePixels.size()==4420*20*4 &&
-                widePixels[4*10+1]==255 && widePixels[4*30+3]==0 && widePixels[4*4410+1]==64,"全域保持 5 厘米像素、屋顶遮挡和跨块定位");checks++;
+        auto wideAt=[&](int x,int y,int c){return widePixels.at((y*4420+x)*4+c);};
+        require(wide["orthophoto"]["width"]==4420 && widePixels.size()==4420*30*4 &&
+                wideAt(10,9,3)==0 && wideAt(4410,9,1)==64 && wideAt(10,10,1)==255 && wideAt(30,10,3)==0 &&
+                wideAt(4410,19,3)==255 && wideAt(4410,20,3)==0 && wideAt(10,29,1)==255,
+                "Repeated TIFF rows preserve transparency, depth and changes between runs");checks++;
         auto uri=report["records"][0]["content"][0]["uri"].get<std::string>();auto doc=gltf(temp/"out-plain"/uri);
         require(doc["meshes"][0]["primitives"][0]["attributes"].contains("COLOR_0"),"顶点颜色丢失");checks++;
         auto zipped=convert(options(temp/"strip.osgb",temp/"out-strip"));
@@ -194,6 +197,19 @@ int main(int argc,char** argv) {
         require(readBytes(imagePath)==readBytes(temp/"original.png"),"PNG 原字节发生变化");checks++;
         auto textureDoc=gltf(temp/"out-texture"/content["uri"].get<std::string>());
         require(textureDoc["materials"][0]["alphaMode"]=="BLEND" && textureDoc["samplers"][0]["wrapS"]==GL_REPEAT,"alpha 或采样丢失");checks++;
+        auto streaming=options(temp/"texture+alpha.osgb",temp/"out-texture-streamed");
+        streaming.memoryBudgetBytes=256; // Force the on-demand mesh path and one-row bands.
+        auto streamed=convert(streaming).at("orthophoto");
+        const auto rasterPath=streamed.at("uri").get<std::string>();
+        require(streamed==tex.at("orthophoto") && readBytes(streaming.output/rasterPath)==readBytes(temp/"out-texture"/rasterPath),
+                "Texture sampling must match with and without the raster cache");checks++;
+        auto sheet=new osg::MatrixTransform(osg::Matrixd::scale(110,12,1));
+        sheet->addChild(textured);writeNode(sheet,temp/"ortho-sheet.osgb");
+        auto serial=options(temp/"ortho-sheet.osgb",temp/"out-sheet-serial");serial.srs="LOCAL";serial.threads=1;
+        auto threaded=serial;threaded.output=temp/"out-sheet-threaded";threaded.threads=4;
+        auto sheetReport=convert(serial).at("orthophoto");
+        require(sheetReport.at("width")==2200 && sheetReport.at("height")==240 && convert(threaded).at("orthophoto")==sheetReport &&
+                readBytes(threaded.output/rasterPath)==readBytes(serial.output/rasterPath),"Orthophoto row workers must produce identical TIFFs");checks++;
         auto rawOptions=options(temp/"texture+alpha.osgb",temp/"out-texture-pixels");rawOptions.preserveEncoded=false;
         auto raw=convert(rawOptions);require(raw["originalEncodedImages"]==0 && raw["imageReferences"]==1,"原始像素 PNG 路径失败");checks++;
         auto encodedPixels=pngPixels(imagePath);

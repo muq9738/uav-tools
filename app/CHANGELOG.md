@@ -1,5 +1,10 @@
 # 更新日志
 
+## 0.6.14
+
+- Orthophoto rendering now uses the configured conversion threads to process separate rows. A bounded cache reuses projected vertices, mesh attributes, and textures across raster bands.
+- Wide, sparse orthophotos export faster by reusing compressed TIFF strips for consecutive identical rows. The raster retains its 5 cm resolution and georeferencing.
+
 ## 0.6.13
 
 - The desktop updater downloads public GitHub releases anonymously on both platforms.

@@ -11,15 +11,15 @@
 #include <sstream>
 #include <map>
 #include <set>
+#include <atomic>
+#include <future>
+#include <cstring>
+#include <osg/Texture2D>
 
 namespace nt {
 namespace {
 constexpr double resolution = 0.05;
-struct Source {
-    std::string uri;
-    const Json* record;
-    osg::BoundingBoxd bounds;
-};
+using Positions = std::vector<osg::Vec3d>;
 
 using Projection=std::unique_ptr<PJ,decltype(&proj_destroy)>;
 Projection fromEcef(const char* target) {
@@ -84,81 +84,197 @@ int dimension(double span) {
 }
 
 struct Strip {
-    double west,north;
     int width,first,rows;
     Bytes rgba;
     std::vector<double> depth;
 };
 
-osg::Vec4d attribute(const osg::Array* array,unsigned vertex,unsigned primitive,osg::Vec4d value) {
-    if (!array) return value;
-    const unsigned index = array->getBinding()==osg::Array::BIND_OVERALL ? 0 :
-        array->getBinding()==osg::Array::BIND_PER_PRIMITIVE_SET ? primitive : vertex;
-    const auto size = array->getDataSize();
-    for (int c=0;c<size;++c) value[c]=attributeComponent(*array,std::size_t(index)*size+c);
-    return value;
-}
-
-struct DrawTriangle {
-    Strip* strip;
-    const std::vector<osg::Vec3d>* positions;
-    const GeometryInput* mesh;
-    const osg::Texture* texture;
+struct Face {
+    unsigned a,b,c,primitive;
+};
+struct FaceCollector {
+    std::vector<Face>* faces;
     unsigned primitive;
-    void operator()(unsigned a,unsigned b,unsigned c) const {
-        const auto& p=positions->at(a); const auto& q=positions->at(b); const auto& r=positions->at(c);
-        double dx=q.x()-p.x(),dy=q.y()-p.y(),ex=r.x()-p.x(),ey=r.y()-p.y();
-        double area=dx*ey-dy*ex;
-        if (area==0) return;
-        auto state=mesh->state.get();
-        if (area>0 && state && (state->getMode(GL_CULL_FACE)&osg::StateAttribute::ON)) return;
-        int left=std::max(0,int(std::floor(std::min({p.x(),q.x(),r.x()}))));
-        int right=std::min(strip->width-1,int(std::ceil(std::max({p.x(),q.x(),r.x()}))));
-        int top=std::max(strip->first,int(std::floor(std::min({p.y(),q.y(),r.y()}))));
-        int bottom=std::min(strip->first+strip->rows-1,int(std::ceil(std::max({p.y(),q.y(),r.y()}))));
-        if (top>bottom || left>right) return;
-        auto colors=mesh->geometry->getColorArray(); auto coords=mesh->geometry->getTexCoordArray(0);
-        osg::Vec4d white(1,1,1,1);
-        auto ca=attribute(colors,a,primitive,white), cb=attribute(colors,b,primitive,white), cc=attribute(colors,c,primitive,white);
-        auto ua=attribute(coords,a,primitive,{}), ub=attribute(coords,b,primitive,{}), uc=attribute(coords,c,primitive,{});
-        auto diffuse=diffuseColor(state);
-        auto alpha=state && (state->getMode(GL_ALPHA_TEST)&osg::StateAttribute::ON) ? dynamic_cast<const osg::AlphaFunc*>(state->getAttribute(osg::StateAttribute::ALPHAFUNC)) : nullptr;
-        bool blend=state && (state->getMode(GL_BLEND)&osg::StateAttribute::ON);
-        for (int y=top;y<=bottom;++y) for (int x=left;x<=right;++x) {
-            double rx=x+.5-p.x(),ry=y+.5-p.y();
-            double v=(rx*ey-ry*ex)/area,w=(dx*ry-dy*rx)/area,u=1-v-w;
-            if (std::min({u,v,w}) < -1e-10) continue;
-            auto i=std::size_t(y-strip->first)*strip->width+x;
-            double z=u*p.z()+v*q.z()+w*r.z();
-            if (z<=strip->depth[i]) continue;
-            auto color=ca*u+cb*v+cc*w;
-            if (texture) {
-                auto uv=ua*u+ub*v+uc*w;
-                auto texel=sampleSourceTexture(*texture,uv.x(),uv.y());
-                for (int k=0;k<4;++k) color[k]*=texel[k];
-            }
-            if (diffuse) for (int k=0;k<4;++k) color[k]*=(*diffuse)[k];
-            if (alpha && (color.a()<alpha->getReferenceValue() || (alpha->getFunction()==osg::AlphaFunc::GREATER && color.a()==alpha->getReferenceValue()))) continue;
-            if (!blend || alpha) color.a()=1;
-            if (color.a()<=0) continue;
-            strip->depth[i]=z;
-            for (int k=0;k<4;++k) strip->rgba[i*4+k]=static_cast<unsigned char>(std::lround(std::clamp(color[k],0.,1.)*255));
-        }
-    }
+    void operator()(unsigned a,unsigned b,unsigned c) const { faces->push_back({a,b,c,primitive}); }
 };
 
-void render(Strip& strip,const GeometryInput& mesh,const SpatialReference& spatial,PJ* projection) {
-    auto array=mesh.geometry->getVertexArray();
-    std::vector<osg::Vec3d> positions(array->getNumElements());
-    for (unsigned i=0;i<positions.size();++i) {
-        auto p=rasterVertex(mesh,*array,i,spatial,projection);
-        positions[i].set((p.x()-strip.west)/resolution,(strip.north-p.y())/resolution,p.z());
+struct Attribute {
+    std::vector<osg::Vec4d> values;
+    osg::Array::Binding binding=osg::Array::BIND_UNDEFINED;
+    const osg::Array* source=nullptr;
+    osg::Vec4d get(unsigned vertex,unsigned primitive,osg::Vec4d fallback) const {
+        const auto index=binding==osg::Array::BIND_OVERALL ? 0 : binding==osg::Array::BIND_PER_PRIMITIVE_SET ? primitive : vertex;
+        if (source) {
+            for (int c=0;c<source->getDataSize();++c) fallback[c]=attributeComponent(*source,std::size_t(index)*source->getDataSize()+c);
+        }
+        return values.empty() ? fallback : values.at(index);
     }
-    osg::TriangleIndexFunctor<DrawTriangle> draw;
-    draw.strip=&strip; draw.mesh=&mesh; draw.positions=&positions; draw.texture=activeBaseColorTexture(mesh.state);
-    for (unsigned i=0;i<mesh.geometry->getNumPrimitiveSets();++i) {
-        draw.primitive=i;
-        mesh.geometry->getPrimitiveSet(i)->accept(draw);
+};
+Attribute prepareAttribute(const osg::Array* array,const osg::Vec4d& fallback,bool cache) {
+    Attribute result;
+    if (array) {
+        result.binding=array->getBinding();
+        if (!cache) { result.source=array; return result; }
+        result.values.resize(array->getNumElements(),fallback);
+        for (std::size_t i=0;i<result.values.size();++i) for (int c=0;c<array->getDataSize();++c)
+            result.values[i][c]=attributeComponent(*array,i*array->getDataSize()+c);
+    }
+    return result;
+}
+
+struct RasterMesh {
+    Positions positions;
+    const osg::Geometry* sourceGeometry=nullptr;
+    std::vector<Face> faces;
+    Attribute colors,uv;
+    osg::ref_ptr<const osg::Texture> texture;
+    osg::Vec4 diffuse;
+    bool tinted=false,cull=false,blend=false,alphaTest=false,strictAlpha=false;
+    float alphaReference=0;
+};
+struct Source {
+    std::string uri;
+    const Json* record;
+    osg::BoundingBoxd bounds;
+    std::vector<RasterMesh> cached;
+};
+
+std::uint64_t faceLimit(const osg::Geometry& geometry) {
+    std::uint64_t count=0;
+    for (unsigned i=0;i<geometry.getNumPrimitiveSets();++i) count+=geometry.getPrimitiveSet(i)->getNumIndices();
+    return count;
+}
+// Charge the independent raster payload before retaining it. Never pin the source
+// scene, which can also own unrelated arrays, textures, or encoded image data.
+std::uint64_t cacheCharge(const GeometryInput& mesh) {
+    const auto& g=*mesh.geometry;
+    auto count=[](const osg::Array* a)->std::uint64_t { return a ? a->getNumElements() : 0; };
+    auto bytes=sizeof(RasterMesh)+count(g.getVertexArray())*sizeof(osg::Vec3d)+faceLimit(g)*sizeof(Face)+
+        (count(g.getColorArray())+count(g.getTexCoordArray(0)))*sizeof(osg::Vec4d);
+    if (auto tex=activeBaseColorTexture(mesh.state)) {
+        auto image=tex->getImage(0);
+        if (!image || !image->data() || !image->isDataContiguous() || image->isCompressed() || image->r()!=1)
+            return std::numeric_limits<std::uint64_t>::max();
+        bytes+=sizeof(osg::Texture2D)+sizeof(osg::Image)+std::uint64_t(image->getRowSizeInBytes())*image->t();
+    }
+    return bytes;
+}
+RasterMesh prepare(const GeometryInput& mesh,const SpatialReference& spatial,PJ* projection,bool cache) {
+    RasterMesh result;
+    auto array=mesh.geometry->getVertexArray();
+    result.positions.resize(array->getNumElements());
+    for (unsigned i=0;i<result.positions.size();++i) result.positions[i]=rasterVertex(mesh,*array,i,spatial,projection);
+    result.colors=prepareAttribute(mesh.geometry->getColorArray(),{1,1,1,1},cache);
+    result.uv=prepareAttribute(mesh.geometry->getTexCoordArray(0),{},cache);
+    if (cache) {
+        osg::TriangleIndexFunctor<FaceCollector> collect;
+        collect.faces=&result.faces;
+        result.faces.reserve(faceLimit(*mesh.geometry));
+        for (unsigned i=0;i<mesh.geometry->getNumPrimitiveSets();++i) {
+            collect.primitive=i;
+            mesh.geometry->getPrimitiveSet(i)->accept(collect);
+        }
+    } else result.sourceGeometry=mesh.geometry.get();
+    const auto* state=mesh.state.get();
+    if (auto diffuse=diffuseColor(state)) { result.tinted=true; result.diffuse=*diffuse; }
+    result.cull=state && (state->getMode(GL_CULL_FACE)&osg::StateAttribute::ON);
+    result.blend=state && (state->getMode(GL_BLEND)&osg::StateAttribute::ON);
+    if (state && (state->getMode(GL_ALPHA_TEST)&osg::StateAttribute::ON)) {
+        if (auto alpha=dynamic_cast<const osg::AlphaFunc*>(state->getAttribute(osg::StateAttribute::ALPHAFUNC))) {
+            result.alphaTest=true; result.alphaReference=alpha->getReferenceValue(); result.strictAlpha=alpha->getFunction()==osg::AlphaFunc::GREATER;
+        }
+    }
+    result.texture=activeBaseColorTexture(state);
+    if (result.texture && !result.texture->getImage(0)) throw std::runtime_error("Missing orthophoto texture image");
+    if (cache && result.texture) {
+        const auto& image=*result.texture->getImage(0);
+        osg::ref_ptr<osg::Image> copy=new osg::Image;
+        copy->allocateImage(image.s(),image.t(),1,image.getPixelFormat(),image.getDataType(),image.getPacking());
+        std::memcpy(copy->data(),image.data(),std::size_t(image.getRowSizeInBytes())*image.t());
+        osg::ref_ptr<osg::Texture2D> texture=new osg::Texture2D(copy);
+        for (auto axis:{osg::Texture::WRAP_S,osg::Texture::WRAP_T}) texture->setWrap(axis,result.texture->getWrap(axis));
+        result.texture=texture;
+    }
+    return result;
+}
+
+void toPixels(RasterMesh& mesh,const osg::BoundingBoxd& extent) {
+    for (auto& p:mesh.positions) p.set((p.x()-extent.xMin())/resolution,(extent.yMax()-p.y())/resolution,p.z());
+}
+
+void draw(Strip& strip,const RasterMesh& mesh,const Face& face,int first,int end) {
+    const auto& p=mesh.positions.at(face.a); const auto& q=mesh.positions.at(face.b); const auto& r=mesh.positions.at(face.c);
+    double dx=q.x()-p.x(),dy=q.y()-p.y(),ex=r.x()-p.x(),ey=r.y()-p.y();
+    double area=dx*ey-dy*ex;
+    if (area==0 || (area>0 && mesh.cull)) return;
+    int left=std::max(0,int(std::floor(std::min({p.x(),q.x(),r.x()}))));
+    int right=std::min(strip.width-1,int(std::ceil(std::max({p.x(),q.x(),r.x()}))));
+    int top=std::max(first,int(std::floor(std::min({p.y(),q.y(),r.y()}))));
+    int bottom=std::min(end-1,int(std::ceil(std::max({p.y(),q.y(),r.y()}))));
+    if (top>bottom || left>right) return;
+    osg::Vec4d white(1,1,1,1);
+    auto ca=mesh.colors.get(face.a,face.primitive,white), cb=mesh.colors.get(face.b,face.primitive,white), cc=mesh.colors.get(face.c,face.primitive,white);
+    auto ua=mesh.uv.get(face.a,face.primitive,{}), ub=mesh.uv.get(face.b,face.primitive,{}), uc=mesh.uv.get(face.c,face.primitive,{});
+    for (int y=top;y<=bottom;++y) for (int x=left;x<=right;++x) {
+        double rx=x+.5-p.x(),ry=y+.5-p.y();
+        double v=(rx*ey-ry*ex)/area,w=(dx*ry-dy*rx)/area,u=1-v-w;
+        if (std::min({u,v,w}) < -1e-10) continue;
+        auto i=std::size_t(y-strip.first)*strip.width+x;
+        double z=u*p.z()+v*q.z()+w*r.z();
+        if (z<=strip.depth[i]) continue;
+        auto color=ca*u+cb*v+cc*w;
+        if (mesh.texture) {
+            auto uv=ua*u+ub*v+uc*w;
+            auto texel=sampleSourceTexture(*mesh.texture,uv.x(),uv.y());
+            for (int k=0;k<4;++k) color[k]*=texel[k];
+        }
+        if (mesh.tinted) for (int k=0;k<4;++k) color[k]*=mesh.diffuse[k];
+        if (mesh.alphaTest && (color.a()<mesh.alphaReference || (mesh.strictAlpha && color.a()==mesh.alphaReference))) continue;
+        if (!mesh.blend || mesh.alphaTest) color.a()=1;
+        if (color.a()<=0) continue;
+        strip.depth[i]=z;
+        for (int k=0;k<4;++k) strip.rgba[i*4+k]=static_cast<unsigned char>(std::lround(std::clamp(color[k],0.,1.)*255));
+    }
+}
+
+struct StreamFaces {
+    Strip* strip;
+    const RasterMesh* mesh;
+    int first,end;
+    unsigned primitive;
+    void operator()(unsigned a,unsigned b,unsigned c) const { draw(*strip,*mesh,{a,b,c,primitive},first,end); }
+};
+
+// Each worker owns disjoint rows; every pixel sees meshes and faces in source order.
+void render(Strip& strip,const std::vector<const RasterMesh*>& meshes,const Options& options) {
+    if (meshes.empty()) return;
+    const auto samples=std::uint64_t(strip.width)*strip.rows;
+    const int workers=std::min<std::uint64_t>({options.threads,std::uint64_t(strip.rows),1+samples/(256*1024)});
+    std::atomic<bool> stop{false};
+    auto run=[&](int worker) {
+        int first=strip.first+std::int64_t(strip.rows)*worker/workers;
+        int end=strip.first+std::int64_t(strip.rows)*(worker+1)/workers;
+        for (const auto* mesh:meshes) {
+            if (stop.load(std::memory_order_relaxed)) return;
+            if (worker==0 && options.checkCancelled) options.checkCancelled();
+            if (mesh->sourceGeometry) {
+                osg::TriangleIndexFunctor<StreamFaces> stream;
+                stream.strip=&strip; stream.mesh=mesh; stream.first=first; stream.end=end;
+                for (unsigned i=0;i<mesh->sourceGeometry->getNumPrimitiveSets();++i) {
+                    stream.primitive=i;
+                    mesh->sourceGeometry->getPrimitiveSet(i)->accept(stream);
+                }
+            } else for (const auto& face:mesh->faces) draw(strip,*mesh,face,first,end);
+        }
+    };
+    std::vector<std::future<void>> jobs;
+    for (int i=1;i<workers;++i) jobs.push_back(std::async(std::launch::async,run,i));
+    try {
+        run(0);
+        for (auto& job:jobs) job.get();
+    } catch (...) {
+        stop.store(true,std::memory_order_relaxed);
+        throw;
     }
 }
 }
@@ -172,6 +288,8 @@ Json buildOrthophoto(const Json& root,const Json& records,const osg::BoundingBox
     std::map<std::string,const Json*> ledger;
     for (const auto& row:records) for (const auto& content:row.at("content")) ledger.emplace(content.at("uri").get<std::string>(),&row);
     std::vector<Source> sources;
+    const auto budget=options.memoryBudgetBytes ? std::min<std::uint64_t>(64ULL<<20,options.memoryBudgetBytes/4) : 64ULL<<20;
+    auto cacheLeft=budget/2;
     std::set<std::string> seen;
     auto visit=[&](auto&& self,const Json& tile)->void {
         if (tile.contains("children") && !tile.at("children").empty()) {
@@ -179,37 +297,62 @@ Json buildOrthophoto(const Json& root,const Json& records,const osg::BoundingBox
         } else if (tile.contains("content")) {
             auto uri=tile.at("content").at("uri").get<std::string>();
             if (!seen.insert(uri).second) return;
-            Source source{uri,ledger.at(uri),{}};
+            Source source{uri,ledger.at(uri),{},{}};
             if (options.checkCancelled) options.checkCancelled();
-            for (const auto& mesh:read(*source.record,uri)) {
-                auto array=mesh.geometry->getVertexArray();
-                for (unsigned i=0;i<array->getNumElements();++i)
-                    source.bounds.expandBy(rasterVertex(mesh,*array,i,spatial,projection.get()));
+            auto meshes=read(*source.record,uri);
+            auto remaining=cacheLeft;
+            const bool fits=std::all_of(meshes.begin(),meshes.end(),[&](const GeometryInput& mesh) {
+                auto charge=cacheCharge(mesh);
+                if (charge>remaining) return false;
+                remaining-=charge; return true;
+            });
+            if (fits) { cacheLeft=remaining; source.cached.reserve(meshes.size()); }
+            for (const auto& mesh:meshes) {
+                if (fits) {
+                    source.cached.push_back(prepare(mesh,spatial,projection.get(),true));
+                    for (const auto& p:source.cached.back().positions) source.bounds.expandBy(p);
+                } else {
+                    auto array=mesh.geometry->getVertexArray();
+                    for (unsigned i=0;i<array->getNumElements();++i)
+                        source.bounds.expandBy(rasterVertex(mesh,*array,i,spatial,projection.get()));
+                }
             }
             extent.expandBy(source.bounds);
-            sources.push_back(source);
+            sources.push_back(std::move(source));
         }
     };
     visit(visit,root);
     if (!extent.valid()) throw std::runtime_error("No vertices in the orthophoto extent");
     const int width=dimension(extent.xMax()-extent.xMin()),height=dimension(extent.yMax()-extent.yMin());
-    // Only the current band and its depth buffer are resident.
-    auto budget=options.memoryBudgetBytes ? std::min<std::uint64_t>(64ULL<<20,options.memoryBudgetBytes/4) : 64ULL<<20;
-    const int band=static_cast<int>(std::clamp<std::uint64_t>(budget/(sizeof(double)+4)/width,1,1024));
+    for (auto& source:sources) for (auto& mesh:source.cached) toPixels(mesh,extent);
+    const auto stripBudget=budget-(budget/2-cacheLeft);
+    const int band=static_cast<int>(std::clamp<std::uint64_t>(stripBudget/(sizeof(double)+4)/width,1,1024));
     fs::create_directories((options.output/orthoTiffPath).parent_path());
     writeOrthophotoTiff(options.output/orthoTiffPath,width,height,extent.xMin(),extent.yMax(),resolution,epsg,[&](const auto& writeRow) {
         for (int first=0;first<height;) {
             if (options.checkCancelled) options.checkCancelled();
             int rows=std::min(band,height-first);
-            Strip strip{extent.xMin(),extent.yMax(),width,first,rows,{},{}};
+            Strip strip{width,first,rows,{},{}};
             std::size_t samples=std::size_t(rows)*width;
             strip.rgba.resize(samples*4); strip.depth.assign(samples,-std::numeric_limits<double>::infinity());
             if (options.event) options.event({{"type","progress"},{"stage","orthophoto"},{"done",first},{"total",height},{"unit","rows"}});
+            std::vector<const RasterMesh*> batch;
             for (const auto& source:sources) {
-                if (source.bounds.yMax()<strip.north-(first+rows)*resolution || source.bounds.yMin()>strip.north-first*resolution) continue;
+                if (source.bounds.yMax()<extent.yMax()-(first+rows)*resolution || source.bounds.yMin()>extent.yMax()-first*resolution) continue;
                 if (options.checkCancelled) options.checkCancelled();
-                for (const auto& mesh:read(*source.record,source.uri)) render(strip,mesh,spatial,projection.get());
+                if (!source.cached.empty()) {
+                    for (const auto& mesh:source.cached) batch.push_back(&mesh);
+                } else {
+                    render(strip,batch,options);
+                    batch.clear();
+                    for (const auto& input:read(*source.record,source.uri)) {
+                        auto mesh=prepare(input,spatial,projection.get(),false);
+                        toPixels(mesh,extent);
+                        render(strip,{&mesh},options);
+                    }
+                }
             }
+            render(strip,batch,options);
             for (int y=0;y<rows;++y) writeRow(strip.rgba.data()+std::size_t(y)*width*4);
             first+=rows;
         }

@@ -860,6 +860,7 @@ Json convert(const Options& requested) {
     };
     relocateUris(relocateUris,root);
     auto orthoOptions=options;
+    orthoOptions.threads=std::min(requestedThreads,std::max(1U,std::thread::hardware_concurrency()));
     orthoOptions.event=emit;
     orthoOptions.checkCancelled=[&] { if(options.checkCancelled) options.checkCancelled(); if(resume) resume->check(); };
     Engine orthoReader(options,originVector);
