@@ -1,12 +1,12 @@
 # OSGB → 3D Tiles 原生转换器
 
-C++17 命令行工程，读取 OSGB 目录/索引，输出 3D Tiles 1.1 和 GLB。转换运行时不依赖 Node.js。输入读取使用 OpenSceneGraph，坐标转换使用 PROJ，图片和 XML 使用 libpng、libxml2。
+C++17 命令行工程，读取 OSGB 目录/索引，输出 3D Tiles 1.1 和 GLB。转换运行时不依赖 Node.js。输入读取使用 OpenSceneGraph，坐标转换使用 PROJ，图片和 XML 使用 libtiff、libpng、libxml2。
 
 配套 App 位于 [`app/`](../app/README.md)。App 与 CLI 使用同一份随包二进制、SDK 运行时与默认 meshopt 配置，已通过真实模型逐文件哈希对照。行为合同见 [SPEC.md](SPEC.md)。
 
 ## 构建与运行
 
-需要 C++17 编译器、CMake、Ninja、OpenSceneGraph 3.6、libpng、libxml2、SQLite3 开发库与 `sqlite3` 命令。测试另需 libjpeg-turbo 的 turbojpeg（仅在提供 `turbojpeg.h` 时构建图片兼容独立 oracle 回归，缺失则跳过并给出配置告警）。CMake 下载固定版本 PROJ 9.6.2；nlohmann/json 3.12.0 与 meshoptimizer 0.25 编解码源码已附在 `third_party` 并保留许可证、来源记录。
+需要 C++17 编译器、CMake、Ninja、OpenSceneGraph 3.6、libtiff（启用 Deflate）、libpng、libxml2、SQLite3 开发库与 `sqlite3` 命令。测试另需 libjpeg-turbo 的 turbojpeg（仅在提供 `turbojpeg.h` 时构建图片兼容独立 oracle 回归，缺失则跳过并给出配置告警）。CMake 下载固定版本 PROJ 9.6.2；nlohmann/json 3.12.0 与 meshoptimizer 0.25 编解码源码已附在 `third_party` 并保留许可证、来源记录。
 
 ```bash
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release

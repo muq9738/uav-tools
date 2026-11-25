@@ -42,7 +42,7 @@ jobs:
       - name: Linux SDK
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build g++ sqlite3 libsqlite3-dev libopenscenegraph-dev libpng-dev libxml2-dev libturbojpeg0-dev
+          sudo apt-get install -y cmake ninja-build g++ sqlite3 libtiff-dev gdal-bin libsqlite3-dev libopenscenegraph-dev libpng-dev libxml2-dev libturbojpeg0-dev
           echo 'OSGB_SDK=/usr' >> "$GITHUB_ENV"
       - name: Build and test native
         run: python app/scripts/build.py --sdk-prefix "$OSGB_SDK" --skip-desktop
@@ -97,13 +97,13 @@ jobs:
       - name: macOS SDK
         if: runner.os == 'macOS'
         run: |
-          brew install openscenegraph libpng libxml2 sqlite ninja
+          brew install openscenegraph libtiff libpng libxml2 sqlite ninja
           echo "OSGB_SDK=$(brew --prefix)" >> "$GITHUB_ENV"
       - name: Linux SDK
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build g++ python3 patchelf sqlite3 libsqlite3-dev libopenscenegraph-dev libpng-dev libxml2-dev libturbojpeg0-dev
+          sudo apt-get install -y cmake ninja-build g++ python3 patchelf sqlite3 libtiff-dev libsqlite3-dev libopenscenegraph-dev libpng-dev libxml2-dev libturbojpeg0-dev
           echo 'OSGB_SDK=/usr' >> "$GITHUB_ENV"
       - name: Restore Windows SDK cache
         id: vcpkg-cache
@@ -126,7 +126,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             $common = @('--triplet', 'x64-windows', '--overlay-triplets=app/sdk/triplets', '--x-install-root=app/sdk/installed', '--classic')
             # 先安装图片与基础依赖，确保 OSG 配置阶段稳定发现 PNG 与 JPEG 并构建 osgdb_png/osgdb_jpeg。
-            & app/sdk/toolchain/vcpkg.exe install libpng libjpeg-turbo "libxml2[core]" "sqlite3[core,tool]" @common
+            & app/sdk/toolchain/vcpkg.exe install libpng libjpeg-turbo "tiff[core,zip]" "libxml2[core]" "sqlite3[core,tool]" @common
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             & app/sdk/toolchain/vcpkg.exe install "osg[core]" @common
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

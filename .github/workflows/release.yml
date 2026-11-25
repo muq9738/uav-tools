@@ -81,7 +81,7 @@ jobs:
       - name: macOS SDK
         if: runner.os == 'macOS'
         run: |
-          brew install openscenegraph libpng libxml2 sqlite ninja
+          brew install openscenegraph libtiff libpng libxml2 sqlite ninja
           echo "OSGB_SDK=$(brew --prefix)" >> "$GITHUB_ENV"
       - name: Restore Windows SDK cache
         id: vcpkg-cache
@@ -103,7 +103,7 @@ jobs:
             & app/sdk/toolchain/bootstrap-vcpkg.bat -disableMetrics
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             $common = @('--triplet', 'x64-windows', '--overlay-triplets=app/sdk/triplets', '--x-install-root=app/sdk/installed', '--classic')
-            & app/sdk/toolchain/vcpkg.exe install libpng libjpeg-turbo "libxml2[core]" "sqlite3[core,tool]" @common
+            & app/sdk/toolchain/vcpkg.exe install libpng libjpeg-turbo "tiff[core,zip]" "libxml2[core]" "sqlite3[core,tool]" @common
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             & app/sdk/toolchain/vcpkg.exe install "osg[core]" @common
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

@@ -124,10 +124,10 @@ void writeNode(osg::Node* node,const fs::path& file,bool compressed=false) {
 }
 osg::ref_ptr<osg::Vec3Array> grid(unsigned count) {
     auto values=new osg::Vec3Array;
-    for(unsigned i=0;i<count;++i) values->push_back({float(i),float(i%4),-0.5f*float(i)});
+    for(unsigned i=0;i<count;++i) values->push_back({float(i%256),float(i%4+i/256),-0.5f*float(i%256)});
     return values;
 }
-std::array<double,3> gridPoint(unsigned i) {return {double(i),double(i%4),-0.5*double(i)};}
+std::array<double,3> gridPoint(unsigned i) {return {double(i%256),double(i%4+i/256),-0.5*double(i%256)};}
 float normalizedByte(unsigned value) {return static_cast<float>(value/255.0);}
 float normalizedShort(unsigned value) {return static_cast<float>(value/65535.0);}
 Json audit=Json::array();

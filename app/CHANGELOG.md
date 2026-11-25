@@ -1,5 +1,10 @@
 # 更新日志
 
+## 0.6.11
+
+- Export full-model orthophotos as `orthophoto.tif` with lossless RGBA pixels on a 5 cm grid. Georeferenced models use GeoTIFF 1.1 in WGS 84 UTM or UPS, with the projection and pixel placement embedded in the file.
+- Preserve model-local coordinates for unreferenced inputs and select BigTIFF for large rasters. The conversion report now identifies the raster CRS and its upper-left pixel edge.
+
 ## 0.6.10
 
 - Every OSGB conversion now writes a north-up `orthophoto.png` next to `tileset.json`, using the finest source meshes at 5 cm per pixel across the full model extent.

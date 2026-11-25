@@ -2,10 +2,9 @@
 #include "source_attributes.hpp"
 #include <osg/AlphaFunc>
 #include <osg/TriangleIndexFunctor>
-#include <png.h>
+#include <proj.h>
 #include <algorithm>
 #include <cmath>
-#include <fstream>
 #include <limits>
 #include <map>
 #include <set>
@@ -16,48 +15,47 @@ constexpr double resolution = 0.05;
 struct Source {
     std::string uri;
     const Json* record;
-    double south, north;
+    osg::BoundingBoxd bounds;
 };
 
-// Keep libpng's longjmp within one call, outside the lifetime of C++ buffers.
-class PngWriter {
-    std::ofstream stream;
-    png_structp png = nullptr;
-    png_infop info = nullptr;
-public:
-    explicit PngWriter(const fs::path& file) : stream(file,std::ios::binary) {
-        if (!stream) throw std::runtime_error("无法创建正射影像");
-        png = png_create_write_struct(PNG_LIBPNG_VER_STRING,nullptr,nullptr,nullptr);
-        if (!png) throw std::bad_alloc();
-    }
-    ~PngWriter() { png_destroy_write_struct(&png,&info); }
-    void begin(int width,int height) {
-        info = png_create_info_struct(png);
-        if (!info) throw std::bad_alloc();
-        if (setjmp(png_jmpbuf(png))) throw std::runtime_error("无法初始化 PNG");
-        png_set_write_fn(png,&stream,[](png_structp p,png_bytep bytes,png_size_t size) {
-            auto& out = *static_cast<std::ofstream*>(png_get_io_ptr(p));
-            if (!out.write(reinterpret_cast<const char*>(bytes),size)) png_error(p,"write failed");
-        },nullptr);
-        png_set_user_limits(png,PNG_UINT_31_MAX,PNG_UINT_31_MAX);
-        png_set_IHDR(png,info,width,height,8,PNG_COLOR_TYPE_RGBA,PNG_INTERLACE_NONE,PNG_COMPRESSION_TYPE_DEFAULT,PNG_FILTER_TYPE_DEFAULT);
-        png_write_info(png,info);
-    }
-    void row(unsigned char* bytes) {
-        if (setjmp(png_jmpbuf(png))) throw std::runtime_error("正射影像行写入失败");
-        png_write_row(png,bytes);
-    }
-    void finish() {
-        if (setjmp(png_jmpbuf(png))) throw std::runtime_error("正射影像写入失败");
-        png_write_end(png,info);
-        stream.close();
-        if (!stream) throw std::runtime_error("正射影像文件写入失败");
-    }
-};
+using Projection=std::unique_ptr<PJ,decltype(&proj_destroy)>;
+Projection fromEcef(const char* target) {
+    Projection raw(proj_create_crs_to_crs(nullptr,"EPSG:4978",target,nullptr),proj_destroy);
+    Projection normalized(raw ? proj_normalize_for_visualization(nullptr,raw.get()) : nullptr,proj_destroy);
+    if (!normalized) throw std::runtime_error("Cannot create orthophoto coordinate operation");
+    return normalized;
+}
+
+osg::Vec3d project(PJ* operation,const osg::Vec3d& ecef) {
+    auto point=proj_trans(operation,PJ_FWD,proj_coord(ecef.x(),ecef.y(),ecef.z(),0));
+    if (!std::isfinite(point.xyz.x) || !std::isfinite(point.xyz.y) || !std::isfinite(point.xyz.z))
+        throw std::runtime_error("Invalid orthophoto coordinate");
+    return {point.xyz.x,point.xyz.y,point.xyz.z};
+}
+
+int gridEpsg(const SpatialReference& spatial,const osg::Vec3d& center) {
+    if (spatial.localOnly()) return 0;
+    auto geographic=fromEcef("EPSG:4979");
+    const auto site=project(geographic.get(),center*spatial.placement());
+    const double lon=site.x(),lat=site.y();
+    if (lat>=84) return 5041; // WGS 84 / UPS North (E,N)
+    if (lat < -80) return 5042;
+    int zone=std::clamp(int(std::floor((lon+180)/6))+1,1,60);
+    if (lat>=56 && lat<64 && lon>=3 && lon<12) zone=32;
+    if (lat>=72 && lon>=0 && lon<42) zone=lon<9 ? 31 : lon<21 ? 33 : lon<33 ? 35 : 37;
+    return (lat>=0 ? 32600 : 32700)+zone;
+}
+
+osg::Vec3d rasterVertex(const GeometryInput& mesh,const osg::Array& array,unsigned i,
+                        const SpatialReference& spatial,PJ* projection) {
+    auto source=osg::Vec3d(attributeComponent(array,3ULL*i),attributeComponent(array,3ULL*i+1),attributeComponent(array,3ULL*i+2))*mesh.matrix;
+    if (!projection) return source;
+    return project(projection,spatial.toLocal(source)*spatial.placement());
+}
 
 int dimension(double span) {
     double pixels = std::ceil(span/resolution);
-    if (!std::isfinite(pixels) || pixels > PNG_UINT_31_MAX) throw std::runtime_error("全域影像尺寸超过 PNG 上限");
+    if (!std::isfinite(pixels) || pixels >= std::numeric_limits<int>::max()) throw std::runtime_error("Orthophoto exceeds the rasterizer dimension limit");
     return std::max(1,static_cast<int>(pixels));
 }
 
@@ -125,12 +123,11 @@ struct DrawTriangle {
     }
 };
 
-void render(Strip& strip,const GeometryInput& mesh,const SpatialReference& spatial) {
+void render(Strip& strip,const GeometryInput& mesh,const SpatialReference& spatial,PJ* projection) {
     auto array=mesh.geometry->getVertexArray();
     std::vector<osg::Vec3d> positions(array->getNumElements());
-    for (std::size_t i=0;i<positions.size();++i) {
-        auto p=osg::Vec3d(attributeComponent(*array,3*i),attributeComponent(*array,3*i+1),attributeComponent(*array,3*i+2))*mesh.matrix;
-        if (spatial.projected()) p=spatial.toLocal(p);
+    for (unsigned i=0;i<positions.size();++i) {
+        auto p=rasterVertex(mesh,*array,i,spatial,projection);
         positions[i].set((p.x()-strip.west)/resolution,(strip.north-p.y())/resolution,p.z());
     }
     osg::TriangleIndexFunctor<DrawTriangle> draw;
@@ -144,7 +141,10 @@ void render(Strip& strip,const GeometryInput& mesh,const SpatialReference& spati
 
 Json buildOrthophoto(const Json& root,const Json& records,const osg::BoundingBoxd& bounds,
                      const SpatialReference& spatial,const Options& options,const OrthoMeshReader& read) {
-    const int width=dimension(bounds.xMax()-bounds.xMin()),height=dimension(bounds.yMax()-bounds.yMin());
+    const int epsg=gridEpsg(spatial,bounds.center());
+    Projection projection(nullptr,proj_destroy);
+    if (epsg) projection=fromEcef(("EPSG:"+std::to_string(epsg)).c_str());
+    osg::BoundingBoxd extent;
     std::map<std::string,const Json*> ledger;
     for (const auto& row:records) for (const auto& content:row.at("content")) ledger.emplace(content.at("uri").get<std::string>(),&row);
     std::vector<Source> sources;
@@ -155,37 +155,43 @@ Json buildOrthophoto(const Json& root,const Json& records,const osg::BoundingBox
         } else if (tile.contains("content")) {
             auto uri=tile.at("content").at("uri").get<std::string>();
             if (!seen.insert(uri).second) return;
-            auto box=tile.at("boundingVolume").at("box").get<std::vector<double>>();
-            double radius=std::abs(box[4])+std::abs(box[7])+std::abs(box[10]);
-            sources.push_back({uri,ledger.at(uri),box[1]-radius,box[1]+radius});
+            Source source{uri,ledger.at(uri),{}};
+            if (options.checkCancelled) options.checkCancelled();
+            for (const auto& mesh:read(*source.record,uri)) {
+                auto array=mesh.geometry->getVertexArray();
+                for (unsigned i=0;i<array->getNumElements();++i)
+                    source.bounds.expandBy(rasterVertex(mesh,*array,i,spatial,projection.get()));
+            }
+            extent.expandBy(source.bounds);
+            sources.push_back(source);
         }
     };
     visit(visit,root);
-    // Stream horizontal bands to libpng; even a 20k x 20k image needs only one band in memory.
+    if (!extent.valid()) throw std::runtime_error("No vertices in the orthophoto extent");
+    const int width=dimension(extent.xMax()-extent.xMin()),height=dimension(extent.yMax()-extent.yMin());
+    // Only the current band and its depth buffer are resident.
     auto budget=options.memoryBudgetBytes ? std::min<std::uint64_t>(64ULL<<20,options.memoryBudgetBytes/4) : 64ULL<<20;
     const int band=static_cast<int>(std::clamp<std::uint64_t>(budget/(sizeof(double)+4)/width,1,1024));
-    PngWriter png(options.output/"orthophoto.png");
-    png.begin(width,height);
-    for (int first=0;first<height;) {
-        if (options.checkCancelled) options.checkCancelled();
-        int rows=std::min(band,height-first);
-        Strip strip{bounds.xMin(),bounds.yMax(),width,first,rows};
-        std::size_t samples=std::size_t(rows)*width;
-        strip.rgba.resize(samples*4); strip.depth.assign(samples,-std::numeric_limits<double>::infinity());
-        if (options.event) options.event({{"type","progress"},{"stage","orthophoto"},{"done",first},{"total",height},{"unit","rows"}});
-        for (const auto& source:sources) {
-            if (source.north<strip.north-(first+rows)*resolution || source.south>strip.north-first*resolution) continue;
+    writeOrthophotoTiff(options.output/"orthophoto.tif",width,height,extent.xMin(),extent.yMax(),resolution,epsg,[&](const auto& writeRow) {
+        for (int first=0;first<height;) {
             if (options.checkCancelled) options.checkCancelled();
-            for (const auto& mesh:read(*source.record,source.uri)) render(strip,mesh,spatial);
+            int rows=std::min(band,height-first);
+            Strip strip{extent.xMin(),extent.yMax(),width,first,rows,{},{}};
+            std::size_t samples=std::size_t(rows)*width;
+            strip.rgba.resize(samples*4); strip.depth.assign(samples,-std::numeric_limits<double>::infinity());
+            if (options.event) options.event({{"type","progress"},{"stage","orthophoto"},{"done",first},{"total",height},{"unit","rows"}});
+            for (const auto& source:sources) {
+                if (source.bounds.yMax()<strip.north-(first+rows)*resolution || source.bounds.yMin()>strip.north-first*resolution) continue;
+                if (options.checkCancelled) options.checkCancelled();
+                for (const auto& mesh:read(*source.record,source.uri)) render(strip,mesh,spatial,projection.get());
+            }
+            for (int y=0;y<rows;++y) writeRow(strip.rgba.data()+std::size_t(y)*width*4);
+            first+=rows;
         }
-        for (int y=0;y<rows;++y) png.row(strip.rgba.data()+std::size_t(y)*width*4);
-        first+=rows;
-    }
-    png.finish();
+    });
     if (options.event) options.event({{"type","progress"},{"stage","orthophoto"},{"done",height},{"total",height},{"unit","rows"}});
     if (options.checkCancelled) options.checkCancelled();
-    const auto& placement=spatial.placement();
-    return {{"uri","orthophoto.png"},{"width",width},{"height",height},{"metersPerPixel",resolution},
-            {"upperLeftEdgeENU",{bounds.xMin(),bounds.yMax()}},{"localToEcef",std::vector<double>(placement.ptr(),placement.ptr()+16)}};
+    return {{"uri","orthophoto.tif"},{"width",width},{"height",height},{"metersPerPixel",resolution},
+            {"crs",epsg ? "EPSG:"+std::to_string(epsg) : "LOCAL"},{"upperLeftEdge",{extent.xMin(),extent.yMax()}}};
 }
 }

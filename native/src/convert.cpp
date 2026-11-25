@@ -880,7 +880,7 @@ Json convert(const Options& requested) {
         return meshes;
     };
     auto orthophoto=buildOrthophoto(root,records,bounds,spatial,orthoOptions,readOrthoMeshes);
-    if(checkpoint) derivedAssets["orthophoto.png"]=fileIdentity(options.output/"orthophoto.png");
+    if(checkpoint) derivedAssets["orthophoto.tif"]=fileIdentity(options.output/"orthophoto.tif");
     Json previewSourceRoot;
     if(options.preview) previewSourceRoot=root;
     Json topAudit=Json::array();
@@ -1044,7 +1044,7 @@ Json convert(const Options& requested) {
     } catch(const PauseRequested&) {
         if(options.checkCancelled) options.checkCancelled();
         verifyCurrentInputs();
-        fs::remove(options.output/"orthophoto.png");
+        fs::remove(options.output/"orthophoto.tif");
         fs::remove(options.output/"tileset.json");fs::remove(options.output/"conversion-report.json");
         fs::remove_all(topStaging);fs::remove_all(previewStaging);fs::remove_all(options.output/"preview");
         for(auto it=derivedAssets.begin();it!=derivedAssets.end();++it) fs::remove(options.output/fs::u8path(it.key()));

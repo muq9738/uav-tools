@@ -49,7 +49,7 @@ Completed jobs open directly in the app's existing system WebView. The bundled C
 Prerequisites: C++17, CMake, Ninja, Python 3, Go, and the libraries below. The build also downloads pinned PROJ, Draco, and Basis Universal sources as needed.
 
 ```bash
-brew install openscenegraph libpng libxml2 sqlite ninja
+brew install openscenegraph libtiff libpng libxml2 sqlite ninja
 python3 app/scripts/build.py --sdk-prefix "$(brew --prefix)"
 open "app/dist/darwin-arm64/OSGB 转 3D Tiles.app"
 ```
@@ -92,7 +92,7 @@ Open the printed local URL to create jobs, follow progress, inspect logs, pause/
 
 ## Output
 
-Each conversion writes a north-up `orthophoto.png` next to `tileset.json`. The image covers the full model at 0.05 meters per pixel, with transparent pixels outside the mesh. The `orthophoto` entry in `conversion-report.json` includes its dimensions, upper-left pixel edge in local east/north coordinates, and the local-to-ECEF transform used by the tileset.
+Each conversion writes `orthophoto.tif` next to `tileset.json`. It renders the finest meshes on a north-up 0.05 m grid with transparent background and lossless Deflate compression. For georeferenced models, the file embeds a GeoTIFF 1.1 PixelIsArea transform and the WGS 84 UTM zone at the model center (UPS in polar regions). `LOCAL` inputs retain model-local metre coordinates without an Earth CRS. Large rasters use BigTIFF. In `conversion-report.json`, `orthophoto.crs` identifies the raster coordinate system and `upperLeftEdge` gives the outer corner in that system. For a point `(x, y)` in the raster CRS, the zero-based pixel is `floor((x - west) / 0.05), floor((north - y) / 0.05)`.
 
 ```text
 new-tiles/

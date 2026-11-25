@@ -22,9 +22,9 @@
 
 ### 全域正射底图
 
-每次转换都会在 `tileset.json` 同目录生成 `orthophoto.png`。底图取自源模型最细层的三角面，北朝上、东朝右，空白区域透明。每像素覆盖 0.05 × 0.05 米，长边可以超过 4096 像素。转换器分带写入单张 PNG。
+每次转换都会在 `tileset.json` 同目录生成 `orthophoto.tif`。转换器将最细层三角面投影到 0.05 米的像素网格，格网北朝上、东朝右，空白区域透明。整图采用分带写入和 Deflate 无损压缩，大图自动使用 BigTIFF。
 
-`conversion-report.json` 的 `orthophoto` 字段提供 `uri`、`width`、`height`、`metersPerPixel`、`upperLeftEdgeENU` 和 `localToEcef`。`localToEcef` 与主 tileset 的根矩阵采用相同的列主序。把地理点按实际高程转成 ECEF，再乘逆矩阵得到局部东、北坐标 `(E, N)`。若左上外边界为 `(W, T)`，对应的零基像素列、行为 `floor((E-W)/0.05)`、`floor((T-N)/0.05)`。落在图片外的点应按实际裁剪范围处理。
+有地理参考的模型使用 GeoTIFF 1.1。文件内嵌像素外边界定位（PixelIsArea）及模型中心所在的 WGS 84 UTM 投影，极区使用 UPS。`LOCAL` 模型保留模型局部米制坐标。`conversion-report.json` 的 `orthophoto` 字段包含 `uri`、`width`、`height`、`metersPerPixel`、`crs` 和左上像素的外边界坐标 `upperLeftEdge`。将框选点换算到 `crs` 后，设点坐标为 `(x, y)`，左上外边界为 `(west, north)`，则零基像素列、行为 `floor((x-west)/0.05)`、`floor((north-y)/0.05)`。
 
 ### 按需启用优化
 
@@ -55,7 +55,7 @@ Draco 顶点量化、KTX2 UASTC / ETC1S 纹理与远景父层重建均为**显�
 需要 C++17、CMake、Ninja、Python 3、Go 及下列依赖。构建脚本还会按需下载固定版本的 PROJ、Draco 与 Basis Universal 源码。
 
 ```bash
-brew install openscenegraph libpng libxml2 sqlite ninja
+brew install openscenegraph libtiff libpng libxml2 sqlite ninja
 python3 app/scripts/build.py --sdk-prefix "$(brew --prefix)"
 open "app/dist/darwin-arm64/OSGB 转 3D Tiles.app"
 ```

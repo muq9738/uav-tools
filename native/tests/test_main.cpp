@@ -6,6 +6,7 @@
 #include <osgDB/WriteFile>
 #include <proj.h>
 #include <png.h>
+#include <tiffio.h>
 #include <osg/TexEnv>
 #include <chrono>
 #include <cstring>
@@ -55,6 +56,16 @@ std::vector<osg::Vec3d> worldPositions(const fs::path& file,const osg::Matrixd& 
     }
     return points;
 }
+Bytes tiffPixels(const fs::path& file) {
+    std::unique_ptr<TIFF,decltype(&TIFFClose)> tif(TIFFOpen(file.string().c_str(),"r"),TIFFClose);
+    require(bool(tif),"TIFF open");
+    uint32_t height=0;
+    require(TIFFGetField(tif.get(),TIFFTAG_IMAGELENGTH,&height),"TIFF height");
+    const auto stride=TIFFScanlineSize(tif.get());
+    Bytes pixels(stride*height);
+    for (uint32_t y=0;y<height;++y) require(TIFFReadScanline(tif.get(),pixels.data()+stride*y,y)>=0,"TIFF scanline");
+    return pixels;
+}
 Bytes pngPixels(const fs::path& file) {
     png_image image{};image.version=PNG_IMAGE_VERSION;
     require(png_image_begin_read_from_file(&image,file.string().c_str()),"独立 PNG 解码初始化");image.format=PNG_FORMAT_RGBA;
@@ -82,8 +93,12 @@ void writeNode(osg::Node* node,const fs::path& path,bool compressed=false) {
 Options options(const fs::path& input,const fs::path& output) {
     Options o;o.input=input;o.output=output;o.compressGeometry=false;o.srs="ENU:32.427247976,120.6706181";o.origin="1,2,30.665";return o;
 }
-int main() {
+int main(int argc,char** argv) {
     try {
+        if (argc==3 && std::string(argv[1])=="--write-triangle") {
+            writeNode(triangle(),fs::absolute(fs::u8path(argv[2])));
+            return 0;
+        }
         fs::path temp=fs::current_path()/("test-data-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
         fs::create_directories(temp);unsigned checks=0;
         auto plain=triangle();writeNode(plain.get(),temp/"plain.osgb");
@@ -92,18 +107,20 @@ int main() {
         require(report["trianglesAllLods"]==1 && report["verticesAllLods"]==3,"无索引三角形保留");checks++;
         auto plainManifest=Json::parse(readBytes(temp/"out-plain/tileset.json"));
         require(plainManifest["root"]["geometricError"].get<double>()>0,"单层输入的主入口根误差必须为正，否则 Cesium 不遍历");checks++;
-        const auto& ortho=report.at("orthophoto");
+        auto local=options(temp/"plain.osgb",temp/"out-local");local.srs="LOCAL";
+        const auto ortho=convert(local).at("orthophoto");
         require(ortho.at("width")==20 && ortho.at("height")==20 && ortho.at("metersPerPixel")==0.05 &&
-                ortho.at("upperLeftEdgeENU")==Json::array({0,1}) && ortho.at("localToEcef")==plainManifest["root"]["transform"],"正射影像像素网格与地理定位");
-        auto pixels=pngPixels(temp/"out-plain"/ortho.at("uri").get<std::string>());
+                ortho.at("upperLeftEdge")==Json::array({0,1}) && ortho.at("crs")=="LOCAL","Local orthophoto grid");
+        auto pixels=tiffPixels(local.output/ortho.at("uri").get<std::string>());
         auto at=[&](int x,int y,int channel){return pixels.at((y*20+x)*4+channel);};
         require(pixels.size()==20*20*4 && at(16,2,3)==0 && at(16,19,3)==255 && at(16,19,1)==64,"北朝上、透明背景和顶点颜色");checks++;
         auto scene=new osg::Group;
         auto rooftop=new osg::MatrixTransform(osg::Matrixd::translate(0,0,10));
         rooftop->addChild(triangle(true,false)); scene->addChild(rooftop); scene->addChild(triangle(true));
         auto far=new osg::MatrixTransform(osg::Matrixd::translate(220,0,0));far->addChild(triangle(true));scene->addChild(far);
-        writeNode(scene,temp/"wide.osgb");auto wide=convert(options(temp/"wide.osgb",temp/"out-wide"));
-        auto widePixels=pngPixels(temp/"out-wide/orthophoto.png");
+        writeNode(scene,temp/"wide.osgb");local.input=temp/"wide.osgb";local.output=temp/"out-wide";
+        auto wide=convert(local);
+        auto widePixels=tiffPixels(local.output/"orthophoto.tif");
         require(wide["orthophoto"]["width"]==4420 && widePixels.size()==4420*20*4 &&
                 widePixels[4*10+1]==255 && widePixels[4*30+3]==0 && widePixels[4*4410+1]==64,"全域保持 5 厘米像素、屋顶遮挡和跨块定位");checks++;
         auto uri=report["records"][0]["content"][0]["uri"].get<std::string>();auto doc=gltf(temp/"out-plain"/uri);
@@ -425,7 +442,7 @@ int main() {
         }
         require(indexOffsets.size()==2 && indexData[0]!=indexData[1] && end<=cacheDoc["buffers"][1]["byteLength"].get<std::size_t>(),"等长不同索引不能在 Cesium 缓存中别名");checks++;
         auto restartNode=new osg::Geode;auto restartGeometry=new osg::Geometry;auto restartPositions=new osg::Vec3Array;
-        for(unsigned i=0;i<65536;++i) restartPositions->push_back({float(i),0,0});
+        for(unsigned i=0;i<65536;++i) restartPositions->push_back({float(i)/1024,0,0});
         restartGeometry->setVertexArray(restartPositions);restartGeometry->addPrimitiveSet(new osg::DrawArrays(GL_POINTS,0,65536));restartNode->addDrawable(restartGeometry);
         writeNode(restartNode,temp/"restart-index.osgb");auto restartReport=convert(options(temp/"restart-index.osgb",temp/"out-restart-index"));
         auto restartDoc=gltf(temp/"out-restart-index"/restartReport["records"][0]["content"][0]["uri"].get<std::string>());

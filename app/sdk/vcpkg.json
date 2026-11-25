@@ -4,6 +4,7 @@
   "builtin-baseline": "84bab45d415d22042bd0b9081aea57f362da3f35",
   "dependencies": [
     { "name": "osg", "default-features": false },
+    { "name": "tiff", "default-features": false, "features": ["zip"] },
     "libpng",
     "libjpeg-turbo",
     { "name": "libxml2", "default-features": false },

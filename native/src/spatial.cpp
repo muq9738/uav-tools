@@ -44,7 +44,7 @@ struct SpatialReference::Impl {
     PJ* operation=nullptr;
     osg::Vec3d origin,ecefOrigin,derivativeStep;
     osg::Matrixd placement,inverse;
-    bool isProjected=false,isGeographic=false;
+    bool isProjected=false,isGeographic=false,localOnly=false;
     ~Impl() {if(operation) proj_destroy(operation);if(context) proj_context_destroy(context);}
 };
 SpatialReference::SpatialReference(const std::string& srs,const osg::Vec3d& origin):impl_(new Impl) {
@@ -64,6 +64,7 @@ SpatialReference::SpatialReference(const std::string& srs,const osg::Vec3d& orig
     } else if(isLocalSrs(srs)) {
         // 大疆智图 / ContextCapture 无地理参考的局部直角坐标系（LOCAL / LOCAL_CS[...]）：
         // 保持原始米制局部坐标不做投影变形，锚定在 (0°, 0°, 0m) ENU 切平面，保证 Cesium 可正常预览与交互。
+        impl_->localOnly=true;
         impl_->placement=enuTransform(0,0,0,origin);
     } else {
         if(srs.empty()) throw std::runtime_error("缺少 SRS，拒绝猜测坐标系");
@@ -115,6 +116,7 @@ SpatialReference::SpatialReference(const std::string& srs,const osg::Vec3d& orig
     if(!impl_->inverse.invert(impl_->placement)) throw std::runtime_error("无效空间基准矩阵");
 }
 SpatialReference::~SpatialReference()=default;
+bool SpatialReference::localOnly() const {return impl_->localOnly;}
 bool SpatialReference::projected() const {return impl_->isProjected;}
 const osg::Matrixd& SpatialReference::placement() const {return impl_->placement;}
 osg::Vec3d SpatialReference::toLocal(const osg::Vec3d& source) const {

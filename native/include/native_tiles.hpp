@@ -60,6 +60,7 @@ public:
     SpatialReference(const std::string& srs, const osg::Vec3d& origin);
     ~SpatialReference();
     bool projected() const;
+    bool localOnly() const;
     const osg::Matrixd& placement() const;
     osg::Vec3d toLocal(const osg::Vec3d& source) const;
     osg::Vec3d normalToLocal(const osg::Vec3d& point, const osg::Vec3d& normal) const;

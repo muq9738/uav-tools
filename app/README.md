@@ -42,7 +42,7 @@ docker run --rm -p 8990:8990 \
 macOS：
 
 ```bash
-brew install openscenegraph libpng libxml2 sqlite ninja
+brew install openscenegraph libtiff libpng libxml2 sqlite ninja
 python3 app/scripts/build.py --sdk-prefix "$(brew --prefix)"
 ```
 
@@ -50,7 +50,7 @@ Linux（Debian 12/Ubuntu 24.04 系列）：
 
 ```bash
 sudo apt-get install cmake ninja-build g++ python3 patchelf sqlite3 \
-  libsqlite3-dev libopenscenegraph-dev libpng-dev libxml2-dev
+  libsqlite3-dev libopenscenegraph-dev libtiff-dev libpng-dev libxml2-dev
 python3 app/scripts/build.py --sdk-prefix /usr --skip-desktop
 ```
 
